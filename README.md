@@ -12,10 +12,39 @@ Bot Python pentru automatizarea deschiderii caselor gratuite pe casehug.com cu 4
   - Balanța contului
 - ✅ Configurabil pentru fiecare cont (unele conturi nu au Steam case disponibil)
 - ✅ Nu trebuie să te loghezi de fiecare dată - salvează sesiunea
+- ✅ **Docker support** - rulează în container izolat
 
 ## 🚀 Instalare
 
-### 1. Instalează Python
+### Metoda 1: Cu Docker (Recomandat) 🐳
+
+**Avantaje:**
+- Setup rapid (un singur comandă)
+- Funcționează identic pe Windows/Linux/Mac/Server
+- Nu poluează sistemul cu dependențe
+- Ușor de deploiat pe server
+
+```bash
+# 1. Clonează repo
+git clone https://github.com/your-user/CasehugAuto
+cd CasehugAuto
+
+# 2. Configurează
+copy config.example.json config.json
+# Editează config.json cu datele tale
+
+# 3. Build și run
+docker-compose build
+docker-compose up
+```
+
+📚 **Ghid complet:** [DOCKER_GUIDE.md](DOCKER_GUIDE.md)
+
+---
+
+### Metoda 2: Instalare Manuală
+
+#### 1. Instalează Python
 Descarcă Python 3.8+ de la [python.org](https://www.python.org/downloads/)
 
 ### 2. Instalează dependențele

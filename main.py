@@ -56,6 +56,12 @@ class CasehugBot:
         # User agent pentru a părea browser normal
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
+        # Detectăm dacă suntem în Docker și folosim chromium
+        chrome_bin = os.environ.get('CHROME_BIN')
+        if chrome_bin and os.path.exists(chrome_bin):
+            chrome_options.binary_location = chrome_bin
+            print(f"   🐳 Folosesc Chromium din Docker: {chrome_bin}")
+        
         driver = webdriver.Chrome(options=chrome_options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
@@ -119,16 +125,20 @@ class CasehugBot:
     def save_page_debug_info(self, driver, account_name, page_name):
         """Salvează HTML și screenshot pentru debugging"""
         try:
+            # Creăm directorul de debug dacă nu există
+            debug_dir = "debug_output"
+            os.makedirs(debug_dir, exist_ok=True)
+            
             # Salvează HTML
-            html_filename = f"debug_{account_name}_{page_name}.html"
+            html_filename = os.path.join(debug_dir, f"debug_{account_name}_{page_name}.html")
             with open(html_filename, "w", encoding="utf-8") as f:
                 f.write(driver.page_source)
             
             # Salvează screenshot
-            screenshot_filename = f"debug_{account_name}_{page_name}.png"
+            screenshot_filename = os.path.join(debug_dir, f"debug_{account_name}_{page_name}.png")
             driver.save_screenshot(screenshot_filename)
             
-            print(f"   📄 Debug salvat: {html_filename}, {screenshot_filename}")
+            print(f"   📄 Debug salvat: {os.path.basename(html_filename)}, {os.path.basename(screenshot_filename)}")
         except Exception as e:
             print(f"   ⚠️ Nu am putut salva debug info: {e}")
     
@@ -181,11 +191,11 @@ class CasehugBot:
             self.close_popups(driver)
             time.sleep(1)
             
-            # Salvează screenshot pentru debugging
-            try:
-                driver.save_screenshot(f"debug_{account_name}_page.png")
-            except:
-                pass
+            # Salvează pagina pentru debugging
+            self.save_page_debug_info(driver, account_name, "homepage")
+            
+            # Analizează structura paginii
+            self.parse_page_structure(driver, "casehug.com homepage")
             
             # Verifică dacă utilizatorul este deja logat
             # Căutăm mai multe indicii că utilizatorul e logat
@@ -202,6 +212,7 @@ class CasehugBot:
                 ".wallet"
             ]
             
+            print(f"\n   🔍 Caut indicii de login...")
             for selector in login_indicators:
                 try:
                     elements = driver.find_elements(By.CSS_SELECTOR, selector)
@@ -221,7 +232,7 @@ class CasehugBot:
                 print(f"✅ {account_name} este deja logat! (detectat din URL)")
                 return True
             
-            print(f"⚠️ {account_name} nu este logat. Căutăm butonul Steam login...")
+            print(f"⚠️ {account_name} nu pare să fie logat. Căutăm butonul Steam login...")
             
             # Scroll în sus pentru a vedea header-ul
             driver.execute_script("window.scrollTo(0, 0);")
@@ -233,32 +244,34 @@ class CasehugBot:
             # Caută butonul Steam login cu mai multe strategii
             login_selectors = [
                 "a[href*='steam']",
+                "a[href*='auth']",
+                "a[href*='login']",
                 "button[class*='steam']",
                 ".login-steam",
                 ".steam-login",
-                "a[href*='auth']",
                 "button:contains('Login')",
                 "button:contains('Sign in')",
                 "[class*='login']",
                 "[class*='auth']"
             ]
             
+            print(f"\n   🔍 Caut buton login Steam...")
             login_button = None
             for selector in login_selectors:
                 try:
-                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector.split(':')[0])
                     for elem in elements:
                         if elem.is_displayed() and elem.is_enabled():
                             # Verifică dacă textul sau href conține steam/login
                             text = elem.text.lower()
                             href = elem.get_attribute('href') or ''
-                            if 'steam' in text or 'steam' in href or 'login' in text or 'sign' in text:
+                            if 'steam' in text or 'steam' in href.lower() or 'login' in text or 'sign' in text:
                                 login_button = elem
-                                print(f"   ✓ Găsit buton login: {selector}")
+                                print(f"   ✓ Găsit buton login: {selector} - text: '{text}' - href: '{href[:50]}'")
                                 break
                     if login_button:
                         break
-                except:
+                except Exception as e:
                     continue
             
             if not login_button:
@@ -273,9 +286,9 @@ class CasehugBot:
                         if elem.is_displayed():
                             text = elem.text.lower()
                             href = elem.get_attribute('href') or ''
-                            if any(word in text + href for word in ['login', 'steam', 'sign', 'auth']):
+                            if any(word in text + href.lower() for word in ['login', 'steam', 'sign', 'auth']):
                                 login_button = elem
-                                print(f"   ✓ Găsit în header: {text}")
+                                print(f"   ✓ Găsit în header: '{text}' - href: '{href[:50]}'")
                                 break
                 except:
                     pass
@@ -294,44 +307,56 @@ class CasehugBot:
                         driver.execute_script("arguments[0].click();", login_button)
                     
                     print(f"🔄 Click pe buton Steam login pentru {account_name}")
-                    print("⏸️ Te rog să te loghezi manual în browser (dacă e nevoie).")
-                    print("💡 Dacă ești deja logat, browserul va continua automat.")
-                    time.sleep(10)
+                    print("⏸️ Aștept 15 secunde pentru redirect Steam...")
+                    time.sleep(15)
+                    
+                    # Salvează pagina după login pentru debugging
+                    self.save_page_debug_info(driver, account_name, "after_login_attempt")
                     
                     # Verifică din nou dacă s-a logat
-                    for i in range(5):
-                        if 'profile' in driver.current_url or 'user' in driver.current_url or 'casehug.com' in driver.current_url:
-                            # Verifică indiciile de login
-                            for selector in login_indicators:
-                                try:
-                                    if driver.find_elements(By.CSS_SELECTOR, selector):
-                                        print(f"✅ Login detectat pentru {account_name}!")
-                                        return True
-                                except:
-                                    pass
-                        time.sleep(2)
+                    current_url = driver.current_url
+                    print(f"   📍 URL curent: {current_url}")
                     
-                    # Dacă după 10 secunde nu detectăm login, presupunem că e OK
+                    # Dacă suntem pe Steam, înseamnă că trebuie login manual
+                    if 'steamcommunity.com' in current_url or 'steampowered.com' in current_url:
+                        print(f"⚠️ {account_name} trebuie să se logheze pe Steam!")
+                        print(f"💡 IMPORTANT: Deschide manual browser și loghează-te pe Steam pentru acest profil.")
+                        print(f"⏸️ Aștept 60 secunde...")
+                        time.sleep(60)
+                        
+                        # Revino la casehug
+                        driver.get("https://casehug.com")
+                        time.sleep(5)
+                    
+                    # Verifică dacă suntem înapoi pe casehug și logați
+                    for selector in login_indicators:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            if elements and elements[0].is_displayed():
+                                print(f"✅ Login detectat pentru {account_name}!")
+                                return True
+                        except:
+                            pass
+                    
+                    # Presupunem că e OK și continuăm
                     print(f"⚠️ Nu am detectat login clar, dar continuăm...")
                     return True
                     
                 except Exception as e:
                     print(f"❌ Eroare la click pe buton login: {e}")
-                    # Salvează screenshot la eroare
-                    try:
-                        driver.save_screenshot(f"error_{account_name}_login.png")
-                    except:
-                        pass
+                    self.save_page_debug_info(driver, account_name, "login_error")
                     return False
             else:
                 print(f"❌ Nu am găsit butonul de login Steam pentru {account_name}")
-                print("💡 Deschide manual site-ul în browser și loghează-te.")
-                print("⏸️ Aștept 30 secunde să te loghezi...")
-                time.sleep(30)
+                print("💡 Site-ul poate avea o structură diferită.")
+                print("📄 Verifică fișierele debug_*.html și debug_*.png generate")
+                print("⏸️ Aștept 20 secunde să te poți loga manual dacă e nevoie...")
+                time.sleep(20)
                 return True  # Returnăm True pentru a continua
                     
         except Exception as e:
             print(f"❌ Eroare la login Steam pentru {account_name}: {e}")
+            self.save_page_debug_info(driver, account_name, "exception")
             return False
     
     def open_free_cases(self, driver, account_name, available_cases):
@@ -350,46 +375,56 @@ class CasehugBot:
                 self.close_popups(driver)
                 time.sleep(1)
                 
+                # Salvează pagina pentru debugging
+                self.save_page_debug_info(driver, account_name, f"free_cases_{case_type}")
+                
+                # Analizează structura paginii
+                self.parse_page_structure(driver, f"free cases page - {case_type}")
+                
                 # Scroll pentru a vedea casele
                 driver.execute_script("window.scrollTo(0, 400);")
                 time.sleep(1)
                 
-                # Salvează screenshot pentru debugging
-                try:
-                    driver.save_screenshot(f"debug_{account_name}_{case_type}.png")
-                except:
-                    pass
-                
                 # Găsește case-ul specific cu mai multe strategii
                 case_button = None
                 
+                print(f"\n   🔍 Caut case-ul '{case_type}'...")
+                
                 # Strategia 1: Caută după text în elemente clickabile
                 try:
-                    all_clickable = driver.find_elements(By.CSS_SELECTOR, "button, a, div[role='button'], [onclick]")
+                    all_clickable = driver.find_elements(By.CSS_SELECTOR, "button, a, div[role='button'], [onclick], .case, [class*='case']")
                     for elem in all_clickable:
                         if elem.is_displayed():
                             text = elem.text.lower()
-                            if case_type.lower() in text or ('free' in text and case_type.lower() in elem.get_attribute('class').lower()):
+                            classes = elem.get_attribute('class') or ''
+                            id_attr = elem.get_attribute('id') or ''
+                            data_attrs = ' '.join([elem.get_attribute(attr) or '' for attr in ['data-type', 'data-case', 'data-name']])
+                            
+                            combined = f"{text} {classes} {id_attr} {data_attrs}".lower()
+                            
+                            if case_type.lower() in combined:
                                 case_button = elem
-                                print(f"   ✓ Găsit case prin text: {text[:50]}")
+                                print(f"   ✓ Găsit case prin text/attribut: '{text[:50]}' - class: '{classes[:50]}'")
                                 break
-                except:
-                    pass
+                except Exception as e:
+                    print(f"   ⚠️ Eroare strategia 1: {e}")
                 
-                # Strategia 2: Caută după clase CSS
+                # Strategia 2: Caută după clase CSS specifice
                 if not case_button:
                     case_selectors = [
                         f".case-{case_type.lower()}",
                         f"[data-case='{case_type.lower()}']",
-                        f"[class*='{case_type.lower()}']",
-                        f"button:contains('{case_type}')",
+                        f"[data-type='{case_type.lower()}']",
+                        f"[class*='{case_type.lower()}'][class*='case']",
                         f".{case_type.lower()}-case",
-                        f"#{case_type.lower()}-case"
+                        f"#{case_type.lower()}-case",
+                        f"button[class*='{case_type.lower()}']",
+                        f"a[href*='{case_type.lower()}']"
                     ]
                     
                     for selector in case_selectors:
                         try:
-                            elements = driver.find_elements(By.CSS_SELECTOR, selector.split(':')[0])
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
                             for elem in elements:
                                 if elem.is_displayed() and elem.is_enabled():
                                     case_button = elem
@@ -415,16 +450,23 @@ class CasehugBot:
                         print(f"   ✓ Click pe case {case_type}")
                         time.sleep(5)
                         
+                        # Salvează pagina după click pentru debugging
+                        self.save_page_debug_info(driver, account_name, f"after_open_{case_type}")
+                        
                         # Așteaptă să apară skinul câștigat
                         skin_name = "Necunoscut"
                         price = "N/A"
+                        
+                        print(f"\n   🔍 Caut rezultatul (skin și preț)...")
                         
                         # Caută skinul cu mai multe strategii
                         skin_selectors = [
                             ".item-name", ".skin-name", ".reward-name",
                             ".item-title", ".skin-title", ".reward-title",
-                            "[class*='item']", "[class*='skin']", "[class*='reward']",
-                            ".name", ".title", "h3", "h4"
+                            "[class*='item'][class*='name']",
+                            "[class*='skin'][class*='name']",
+                            "[class*='reward'][class*='name']",
+                            ".name", ".title", "h3", "h4", "h2"
                         ]
                         
                         for selector in skin_selectors:
@@ -433,19 +475,40 @@ class CasehugBot:
                                 for elem in elements:
                                     if elem.is_displayed():
                                         text = elem.text.strip()
-                                        if text and len(text) > 3 and text not in ['Free', case_type]:
-                                            skin_name = text
-                                            print(f"   ✓ Skin găsit: {skin_name}")
-                                            break
+                                        # Verifică că textul e relevant (nu e "Free", case_type, etc.)
+                                        if text and len(text) > 3 and text not in ['Free', case_type, 'Open', 'Claim', 'Collect']:
+                                            # Verifică dacă pare un nume de skin (conține - sau |)
+                                            if '-' in text or '|' in text or '(' in text:
+                                                skin_name = text
+                                                print(f"   ✓ Skin găsit: {skin_name}")
+                                                break
                                 if skin_name != "Necunoscut":
                                     break
                             except:
                                 continue
                         
+                        # Dacă nu am găsit skin cu -, caută orice text lung
+                        if skin_name == "Necunoscut":
+                            for selector in skin_selectors:
+                                try:
+                                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                    for elem in elements:
+                                        if elem.is_displayed():
+                                            text = elem.text.strip()
+                                            if text and len(text) > 5 and text not in ['Free', case_type, 'Open', 'Claim', 'Collect']:
+                                                skin_name = text
+                                                print(f"   ✓ Skin găsit (alternativ): {skin_name}")
+                                                break
+                                    if skin_name != "Necunoscut":
+                                        break
+                                except:
+                                    continue
+                        
                         # Caută prețul
                         price_selectors = [
                             ".item-price", ".skin-price", ".reward-price",
-                            ".price", ".value", "[class*='price']", "[class*='value']"
+                            ".price", ".value", ".amount", ".cost",
+                            "[class*='price']", "[class*='value']", "[class*='amount']"
                         ]
                         
                         for selector in price_selectors:
@@ -454,7 +517,7 @@ class CasehugBot:
                                 for elem in elements:
                                     if elem.is_displayed():
                                         text = elem.text.strip()
-                                        if '$' in text or '€' in text or any(c.isdigit() for c in text):
+                                        if text and ('$' in text or '€' in text or '£' in text or any(c.isdigit() for c in text)):
                                             price = text
                                             print(f"   ✓ Preț găsit: {price}")
                                             break
@@ -480,6 +543,7 @@ class CasehugBot:
                         })
                 else:
                     print(f"❌ Nu am găsit case-ul {case_type}")
+                    print(f"💡 Verifică fișierele debug pentru a vedea structura paginii")
                     print(f"💡 Case-ul {case_type} nu este disponibil sau nu a fost găsit pe pagină")
                     
             except Exception as e:

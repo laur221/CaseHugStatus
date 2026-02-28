@@ -41,6 +41,11 @@ profile_*/
 # Config with sensitive data
 config.json
 
+# Debug output
+debug_output/
+debug_*.html
+debug_*.png
+
 # Logs
 *.log
 

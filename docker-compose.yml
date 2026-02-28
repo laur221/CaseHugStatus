@@ -1,0 +1,46 @@
+services:
+  casehugbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: casehugauto
+    restart: unless-stopped
+    
+    # Volumes pentru persistență date
+    volumes:
+      - ./profiles:/app/profiles
+      - ./config.json:/app/config.json:ro
+      - ./debug_output:/app/debug_output
+    
+    # Variabile de mediu (opțional)
+    environment:
+      - TZ=Europe/Bucharest
+      - PYTHONUNBUFFERED=1
+    
+    # Limită resurse (opțional)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    
+    # Network mode
+    network_mode: bridge
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # HealthCheck (opțional)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
