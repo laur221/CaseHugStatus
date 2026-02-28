@@ -42,12 +42,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiem restul aplicației
 COPY main.py .
 COPY test_telegram.py .
+COPY start.sh .
 
 # Creăm directoarele necesare
 RUN mkdir -p /app/profiles /app/debug_output
 
 # Setăm permisiuni
-RUN chmod -R 755 /app
+RUN chmod -R 755 /app && chmod +x /app/start.sh
 
 # Configurăm Chromium pentru a rula în container
 ENV CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --headless=new"
@@ -55,5 +56,5 @@ ENV CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --headless=
 # Volum pentru configurație și profile
 VOLUME ["/app/profiles", "/app/config", "/app/debug_output"]
 
-# Comanda implicită
-CMD ["python", "-u", "main.py"]
+# Comanda implicită - rulează prin start.sh cu Xvfb
+CMD ["/app/start.sh"]

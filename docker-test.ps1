@@ -1,113 +1,113 @@
-# 🐳 Script de testare rapidă Docker pentru CasehugBot (Windows)
+# Script de testare rapida Docker pentru CasehugBot (Windows)
 
-Write-Host "🐳 CasehugBot - Docker Test Script" -ForegroundColor Cyan
-Write-Host "==================================" -ForegroundColor Cyan
+Write-Host "CasehugBot - Docker Test Script" -ForegroundColor Cyan
+Write-Host "================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Verificare Docker
-Write-Host "🔍 Verificăm Docker..." -ForegroundColor Yellow
+Write-Host "Verificam Docker..." -ForegroundColor Yellow
 try {
     $dockerVersion = docker --version 2>&1
-    Write-Host "✅ Docker: $dockerVersion" -ForegroundColor Green
+    Write-Host "[OK] Docker: $dockerVersion" -ForegroundColor Green
 } catch {
-    Write-Host "❌ Docker nu este instalat sau nu rulează!" -ForegroundColor Red
-    Write-Host "💡 Pornește Docker Desktop" -ForegroundColor Yellow
-    Write-Host "💡 Sau instalează de la: https://www.docker.com/products/docker-desktop" -ForegroundColor Yellow
-    Read-Host "Apasă Enter pentru a închide"
+    Write-Host "[ERROR] Docker nu este instalat sau nu ruleaza!" -ForegroundColor Red
+    Write-Host "[INFO] Porneste Docker Desktop" -ForegroundColor Yellow
+    Write-Host "[INFO] Sau instaleaza de la: https://www.docker.com/products/docker-desktop" -ForegroundColor Yellow
+    Read-Host "Apasa Enter pentru a inchide"
     exit 1
 }
 
 try {
     $composeVersion = docker-compose --version 2>&1
-    Write-Host "✅ Docker Compose: $composeVersion" -ForegroundColor Green
+    Write-Host "[OK] Docker Compose: $composeVersion" -ForegroundColor Green
 } catch {
-    Write-Host "❌ Docker Compose nu este disponibil!" -ForegroundColor Red
-    Read-Host "Apasă Enter pentru a închide"
+    Write-Host "[ERROR] Docker Compose nu este disponibil!" -ForegroundColor Red
+    Read-Host "Apasa Enter pentru a inchide"
     exit 1
 }
 
 Write-Host ""
 
 # Verificare config.json
-Write-Host "📝 Verificăm config.json..." -ForegroundColor Yellow
+Write-Host "Verificam config.json..." -ForegroundColor Yellow
 if (-not (Test-Path "config.json")) {
-    Write-Host "⚠️ config.json nu există!" -ForegroundColor Red
+    Write-Host "[WARN] config.json nu exista!" -ForegroundColor Red
     
     if (Test-Path "config.example.json") {
-        Write-Host "💡 Creez din config.example.json..." -ForegroundColor Yellow
+        Write-Host "[INFO] Creez din config.example.json..." -ForegroundColor Yellow
         Copy-Item "config.example.json" "config.json"
-        Write-Host "✅ config.json creat!" -ForegroundColor Green
-        Write-Host "⚠️ IMPORTANT: Editează config.json cu datele tale!" -ForegroundColor Red
+        Write-Host "[OK] config.json creat!" -ForegroundColor Green
+        Write-Host "[IMPORTANT] Editeaza config.json cu datele tale!" -ForegroundColor Red
         Write-Host ""
         
-        # Deschide config.json în editor
-        $openConfig = Read-Host "Vrei să deschid config.json în editor? (Y/N)"
+        # Deschide config.json in editor
+        $openConfig = Read-Host "Vrei sa deschid config.json in editor? (Y/N)"
         if ($openConfig -eq "Y" -or $openConfig -eq "y") {
             notepad config.json
         }
         
         Write-Host ""
-        Read-Host "Apasă Enter după ce ai editat config.json"
+        Read-Host "Apasa Enter dupa ce ai editat config.json"
     } else {
-        Write-Host "❌ config.example.json lipsește!" -ForegroundColor Red
-        Read-Host "Apasă Enter pentru a închide"
+        Write-Host "[ERROR] config.example.json lipseste!" -ForegroundColor Red
+        Read-Host "Apasa Enter pentru a inchide"
         exit 1
     }
 }
 
-Write-Host "✅ config.json există" -ForegroundColor Green
+Write-Host "[OK] config.json exista" -ForegroundColor Green
 Write-Host ""
 
-# Verificare și creare directoare
-Write-Host "📁 Creez directoare necesare..." -ForegroundColor Yellow
+# Verificare si creare directoare
+Write-Host "Creez directoare necesare..." -ForegroundColor Yellow
 if (-not (Test-Path "profiles")) {
     New-Item -ItemType Directory -Path "profiles" | Out-Null
 }
 if (-not (Test-Path "debug_output")) {
     New-Item -ItemType Directory -Path "debug_output" | Out-Null
 }
-Write-Host "✅ Directoare create" -ForegroundColor Green
+Write-Host "[OK] Directoare create" -ForegroundColor Green
 Write-Host ""
 
 # Build imagine Docker
-Write-Host "🔨 Build imagine Docker..." -ForegroundColor Yellow
-Write-Host "⏱️ Poate dura 2-5 minute prima dată..." -ForegroundColor Yellow
+Write-Host "Build imagine Docker..." -ForegroundColor Yellow
+Write-Host "Poate dura 2-5 minute prima data..." -ForegroundColor Yellow
 Write-Host ""
 
 docker-compose build
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
-    Write-Host "✅ Imagine construită cu succes!" -ForegroundColor Green
+    Write-Host "[OK] Imagine construita cu succes!" -ForegroundColor Green
 } else {
     Write-Host ""
-    Write-Host "❌ Eroare la build imagine!" -ForegroundColor Red
-    Read-Host "Apasă Enter pentru a închide"
+    Write-Host "[ERROR] Eroare la build imagine!" -ForegroundColor Red
+    Read-Host "Apasa Enter pentru a inchide"
     exit 1
 }
 
 Write-Host ""
 Write-Host "==================================" -ForegroundColor Cyan
-Write-Host "🚀 Rulare bot în Docker..." -ForegroundColor Cyan
+Write-Host "Rulare bot in Docker..." -ForegroundColor Cyan
 Write-Host "==================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "💡 Pentru a opri: Ctrl+C" -ForegroundColor Yellow
-Write-Host "💡 Pentru logs: docker-compose logs -f" -ForegroundColor Yellow
-Write-Host "💡 Pentru debug: verifică .\debug_output\" -ForegroundColor Yellow
+Write-Host "[INFO] Pentru a opri: Ctrl+C" -ForegroundColor Yellow
+Write-Host "[INFO] Pentru logs: docker-compose logs -f" -ForegroundColor Yellow
+Write-Host "[INFO] Pentru debug: verifica .\debug_output\" -ForegroundColor Yellow
 Write-Host ""
 
-# Întreabă dacă vrea să ruleze în background
-$runMode = Read-Host "Vrei să rulezi în background? (Y/N) [N]"
+# Intreaba daca vrea sa ruleze in background
+$runMode = Read-Host "Vrei sa rulezi in background? (Y/N) [N]"
 Write-Host ""
 
 if ($runMode -eq "Y" -or $runMode -eq "y") {
-    # Rulează în background
+    # Ruleaza in background
     docker-compose up -d
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "✅ Bot pornit în background!" -ForegroundColor Green
+        Write-Host "[OK] Bot pornit in background!" -ForegroundColor Green
         Write-Host ""
-        Write-Host "📊 Comenzi utile:" -ForegroundColor Yellow
+        Write-Host "Comenzi utile:" -ForegroundColor Yellow
         Write-Host "   docker-compose logs -f" -ForegroundColor White
         Write-Host "   (Vezi logs live)" -ForegroundColor Gray
         Write-Host ""
@@ -115,31 +115,31 @@ if ($runMode -eq "Y" -or $runMode -eq "y") {
         Write-Host "   (Status container)" -ForegroundColor Gray
         Write-Host ""
         Write-Host "   docker-compose down" -ForegroundColor White
-        Write-Host "   (Oprește bot)" -ForegroundColor Gray
+        Write-Host "   (Opreste bot)" -ForegroundColor Gray
         Write-Host ""
         Write-Host "   docker-compose restart" -ForegroundColor White
-        Write-Host "   (Repornește bot)" -ForegroundColor Gray
+        Write-Host "   (Reporneste bot)" -ForegroundColor Gray
     } else {
-        Write-Host "❌ Eroare la pornire container!" -ForegroundColor Red
+        Write-Host "[ERROR] Eroare la pornire container!" -ForegroundColor Red
     }
 } else {
-    # Rulează în foreground
+    # Ruleaza in foreground
     docker-compose up
     
     Write-Host ""
     Write-Host "==================================" -ForegroundColor Cyan
-    Write-Host "👋 Bot oprit" -ForegroundColor Cyan
+    Write-Host "Bot oprit" -ForegroundColor Cyan
     Write-Host "==================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "📊 Pentru a rula în background:" -ForegroundColor Yellow
+    Write-Host "Pentru a rula in background:" -ForegroundColor Yellow
     Write-Host "   docker-compose up -d" -ForegroundColor White
     Write-Host ""
-    Write-Host "📋 Pentru a vedea logs:" -ForegroundColor Yellow
+    Write-Host "Pentru a vedea logs:" -ForegroundColor Yellow
     Write-Host "   docker-compose logs -f" -ForegroundColor White
     Write-Host ""
-    Write-Host "🐛 Pentru debugging:" -ForegroundColor Yellow
+    Write-Host "Pentru debugging:" -ForegroundColor Yellow
     Write-Host "   dir debug_output" -ForegroundColor White
     Write-Host ""
 }
 
-Read-Host "Apasă Enter pentru a închide"
+Read-Host "Apasa Enter pentru a inchide"

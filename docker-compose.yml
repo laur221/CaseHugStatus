@@ -10,6 +10,10 @@ services:
     volumes:
       - ./profiles:/app/profiles
       - ./config.json:/app/config.json:ro
+      - ./cookies_cont1.json:/app/cookies_cont1.json:ro  # Cookie-uri Cont 1
+      - ./cookies_cont2.json:/app/cookies_cont2.json:ro  # Cookie-uri Cont 2
+      - ./cookies_cont3.json:/app/cookies_cont3.json:ro  # Cookie-uri Cont 3
+      - ./cookies_cont4.json:/app/cookies_cont4.json:ro  # Cookie-uri Cont 4
       - ./debug_output:/app/debug_output
     
     # Variabile de mediu (opțional)

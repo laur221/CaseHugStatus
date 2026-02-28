@@ -8,9 +8,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import requests
 from threading import Thread
+from selenium_stealth import stealth
 
 # Configurație
 CONFIG_FILE = "config.json"
@@ -27,49 +29,120 @@ class CasehugBot:
         self.browsers = []
         
     def setup_browser(self, account_name, profile_dir):
-        """Configurează un browser Chrome cu profil persistent"""
+        """Configurează un browser Chrome cu profil persistent și bypass Cloudflare"""
+        # Detectăm dacă suntem în Docker
+        chrome_bin = os.environ.get('CHROME_BIN')
+        is_docker = chrome_bin and os.path.exists(chrome_bin)
+        
+        # Detectăm dacă Xvfb este disponibil (DISPLAY setat)
+        has_xvfb = os.environ.get('DISPLAY') is not None
+        
+        if is_docker:
+            print(f"   🐳 Folosesc Chromium din Docker: {chrome_bin}")
+        if has_xvfb:
+            print(f"   🖥️  Xvfb detectat: DISPLAY={os.environ.get('DISPLAY')} - Folosesc browser VIZIBIL pentru bypass Cloudflare")
+        
+        # Configurare Chrome Options cu stealth maxim
         chrome_options = Options()
         
-        # Creează directorul de profil dacă nu există
-        profile_path = os.path.join(os.getcwd(), "profiles", profile_dir)
-        os.makedirs(profile_path, exist_ok=True)
+        # Setări profil - DOAR pentru non-Docker (profile-urile cauzează probleme în Docker)
+        if not is_docker:
+            profile_path = os.path.join(os.getcwd(), "profiles", profile_dir)
+            os.makedirs(profile_path, exist_ok=True)
+            chrome_options.add_argument(f"--user-data-dir={profile_path}")
+            chrome_options.add_argument("--profile-directory=Default")
         
-        # Setări Chrome
-        chrome_options.add_argument(f"--user-data-dir={profile_path}")
-        chrome_options.add_argument("--profile-directory=Default")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
+        # HEADLESS DOAR dacă NU avem Xvfb (dacă avem Xvfb, browser-ul va fi vizibil în display virtual)
+        if not has_xvfb:
+            print("   ⚠️  Folosesc headless mode (fără Xvfb) - Cloudflare poate bloca")
+            chrome_options.add_argument("--headless=new")
         
-        # Pentru server fără GUI - ACTIVAT
-        chrome_options.add_argument("--headless=new")  # Headless mode nou (mai stabil)
+        # Argumente esențiale pentru Docker
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")  # Rezoluție virtuală
         chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-logging")
-        chrome_options.add_argument("--log-level=3")  # Reduce logging
-        chrome_options.add_argument("--silent")
+        chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--start-maximized")
         
-        # User agent pentru a părea browser normal
+        # Anti-detection avansate
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-infobars")
+        chrome_options.add_argument("--disable-plugins-discovery")
+        
+        # Log level minimal
+        chrome_options.add_argument("--log-level=3")
+        chrome_options.add_argument("--silent")
+        chrome_options.add_argument("--disable-logging")
+        
+        # User agent realist (important pentru Cloudflare)
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
-        # Detectăm dacă suntem în Docker și folosim chromium
-        chrome_bin = os.environ.get('CHROME_BIN')
-        if chrome_bin and os.path.exists(chrome_bin):
+        # Preferințe browser pentru bypass detection
+        prefs = {
+            "credentials_enable_service": False,
+            "profile.password_manager_enabled": False,
+            "profile.default_content_setting_values.notifications": 2,
+            "profile.default_content_settings.popups": 0,
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+        
+        # Path-uri pentru Docker
+        if is_docker:
             chrome_options.binary_location = chrome_bin
-            print(f"   🐳 Folosesc Chromium din Docker: {chrome_bin}")
         
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        # Setează implicit timeout-uri
-        driver.set_page_load_timeout(30)
-        driver.implicitly_wait(5)
-        
-        return driver
+        try:
+            # Creează service pentru chromedriver
+            if is_docker:
+                service = Service(
+                    executable_path='/usr/bin/chromedriver',
+                    log_path='/dev/null'  # Suppress verbose logs
+                )
+            else:
+                service = Service()  # Auto-detect
+            
+            # Inițializează driver
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            # Aplică selenium-stealth pentru bypass Cloudflare
+            stealth(driver,
+                languages=["en-US", "en"],
+                vendor="Google Inc.",
+                platform="Win32",
+                webgl_vendor="Intel Inc.",
+                renderer="Intel Iris OpenGL Engine",
+                fix_hairline=True,
+                run_on_insecure_origins=False,
+            )
+            
+            # Script-uri adiționale anti-detection
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": """
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                    window.chrome = {runtime: {}};
+                """
+            })
+            
+            # Timeout-uri
+            driver.set_page_load_timeout(60)
+            driver.implicitly_wait(5)
+            
+            mode = "VIZIBIL (Xvfb)" if has_xvfb else "headless"
+            print(f"   ✅ Browser configurat în mod {mode} pentru {account_name}")
+            return driver
+            
+        except Exception as e:
+            print(f"   ❌ Eroare critică la crearea browser-ului: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def send_telegram_message(self, message):
         """Trimite mesaj pe Telegram"""
@@ -178,14 +251,98 @@ class CasehugBot:
         except Exception as e:
             print(f"   ⚠️ Eroare la parsare: {e}")
     
+    def load_cookies(self, driver, account_name, cookies_file=None):
+        """Încarcă cookie-uri salvate pentru bypass Cloudflare și login"""
+        try:
+            # Detectează numărul contului din nume (ex: "Cont 1" -> 1)
+            if cookies_file is None:
+                # Extrage numărul din numele contului
+                import re
+                match = re.search(r'(\d+)', account_name)
+                if match:
+                    cont_nr = match.group(1)
+                    cookies_file = f"cookies_cont{cont_nr}.json"
+                else:
+                    # Fallback la cookies.json generic
+                    cookies_file = "cookies.json"
+            
+            if not os.path.exists(cookies_file):
+                print(f"   ⚠️  Fișier cookie lipsă: {cookies_file}")
+                print(f"   💡 Rulează: python save_cookies.py pentru a salva cookie-uri pentru {account_name}")
+                return False
+            
+            print(f"   🍪 Găsit fișier cookies: {cookies_file}")
+            
+            # Deschide site-ul o dată pentru a seta domeniul
+            driver.get("https://casehug.com")
+            time.sleep(1)
+            
+            # Încarcă cookie-urile
+            with open(cookies_file, 'r', encoding='utf-8') as f:
+                cookies = json.load(f)
+            
+            if not cookies or len(cookies) == 0:
+                print(f"   ⚠️  Fișier cookie gol: {cookies_file}")
+                return False
+            
+            # Adaugă fiecare cookie
+            cookies_added = 0
+            for cookie in cookies:
+                try:
+                    # Unele cookie-uri pot avea câmpuri incompatibile
+                    if 'sameSite' in cookie and cookie['sameSite'] not in ['Strict', 'Lax', 'None']:
+                        cookie['sameSite'] = 'Lax'
+                    driver.add_cookie(cookie)
+                    cookies_added += 1
+                except Exception as e:
+                    # Ignoră cookie-urile care nu pot fi adăugate
+                    pass
+            
+            print(f"   ✅ Cookie-uri încărcate pentru {account_name}: {cookies_added}/{len(cookies)} adăugate")
+            return True
+            
+        except Exception as e:
+            print(f"   ⚠️ Eroare la încărcare cookies: {e}")
+            return False
+    
     def login_steam(self, driver, account_name):
         """Verifică dacă este logat sau redirecționează spre login Steam"""
         print(f"\n🔑 Verificare login pentru contul: {account_name}")
         
         try:
-            # Deschide casehug.com
-            driver.get("https://casehug.com")
-            time.sleep(5)
+            # ÎNCARCĂ COOKIE-URI DACĂ EXISTĂ (bypass Cloudflare + login automat)
+            cookies_loaded = self.load_cookies(driver, account_name)
+            
+            if cookies_loaded:
+                # Refresh pagina cu cookie-urile încărcate
+                print("   🔄 Refresh pagină cu cookie-uri...")
+                driver.refresh()
+                time.sleep(3)
+            else:
+                # Deschide casehug.com normal
+                driver.get("https://casehug.com")
+                time.sleep(3)
+            
+            # Detectăm Cloudflare challenge
+            cloudflare_detected = False
+            try:
+                # Caută indicatori Cloudflare
+                page_source = driver.page_source.lower()
+                if any(indicator in page_source for indicator in ['cloudflare', 'checking your browser', 'just a moment', 'ddos protection']):
+                    cloudflare_detected = True
+                    print("   ⚠️ Cloudflare challenge detectat! Aștept 15 secunde...")
+                    time.sleep(15)  # Așteptăm să treacă challenge-ul
+                    # Re-check daca a trecut
+                    page_source = driver.page_source.lower()
+                    if any(indicator in page_source for indicator in ['cloudflare', 'checking your browser']):
+                        print("   ❌ Cloudflare challenge nu a fost trecut automat!")
+                        print("   💡 Site-ul folosește protecție anti-bot puternică.")
+                    else:
+                        print("   ✅ Cloudflare challenge trecut!")
+            except:
+                pass
+            
+            time.sleep(2)
             
             # Închide popup-uri/cookie banners
             self.close_popups(driver)
@@ -360,94 +517,122 @@ class CasehugBot:
             return False
     
     def open_free_cases(self, driver, account_name, available_cases):
-        """Deschide casele gratuite disponibile pentru acest cont"""
+        """Deschide casele gratuite direct folosind link-uri specifice"""
         results = []
+        
+        # Mapping pentru link-uri directe (BYPASS homepage Cloudflare!)
+        case_urls = {
+            "discord": "https://casehug.com/free-cases/discord",
+            "steam": "https://casehug.com/free-cases/steam",
+            "wood": "https://casehug.com/free-cases/wood"
+        }
         
         for case_type in available_cases:
             try:
-                print(f"\n📦 Deschid {case_type} pentru {account_name}...")
+                # Verifică dacă există URL pentru acest tip de case
+                if case_type.lower() not in case_urls:
+                    print(f"\n⚠️  Case type '{case_type}' necunoscut - skip")
+                    continue
                 
-                # Navighează la secțiunea free cases
-                driver.get("https://casehug.com/free")
+                case_url = case_urls[case_type.lower()]
+                print(f"\n📦 Deschid {case_type} pentru {account_name}...")
+                print(f"   🌐 Navighez direct la: {case_url}")
+                
+                # NAVIGARE DIRECTĂ - bypass homepage!
+                driver.get(case_url)
                 time.sleep(3)
+                
+                # Detectăm Cloudflare challenge (și pe paginile interne poate fi)
+                cloudflare_detected = False
+                try:
+                    page_source = driver.page_source.lower()
+                    if any(indicator in page_source for indicator in ['cloudflare', 'checking your browser', 'just a moment']):
+                        cloudflare_detected = True
+                        print("   ⚠️ Cloudflare challenge detectat! Aștept 15 secunde...")
+                        time.sleep(15)
+                        # Re-check
+                        page_source = driver.page_source.lower()
+                        if 'cloudflare' not in page_source and 'checking your browser' not in page_source:
+                            print("   ✅ Cloudflare challenge trecut!")
+                        else:
+                            print("   ⚠️ Cloudflare încă activ...")
+                except:
+                    pass
                 
                 # Închide popup-uri
                 self.close_popups(driver)
                 time.sleep(1)
                 
                 # Salvează pagina pentru debugging
-                self.save_page_debug_info(driver, account_name, f"free_cases_{case_type}")
+                self.save_page_debug_info(driver, account_name, f"free_case_{case_type}")
                 
                 # Analizează structura paginii
-                self.parse_page_structure(driver, f"free cases page - {case_type}")
+                self.parse_page_structure(driver, f"free case page - {case_type}")
                 
-                # Scroll pentru a vedea casele
+                # Scroll pentru a vedea butonul
                 driver.execute_script("window.scrollTo(0, 400);")
                 time.sleep(1)
                 
-                # Găsește case-ul specific cu mai multe strategii
-                case_button = None
+                # Găsește butonul de OPEN/CLAIM cu mai multe strategii
+                open_button = None
                 
-                print(f"\n   🔍 Caut case-ul '{case_type}'...")
+                print(f"\n   🔍 Caut butonul OPEN/CLAIM pentru '{case_type}'...")
                 
-                # Strategia 1: Caută după text în elemente clickabile
+                # Strategia 1: Caută după text în butoane
+                button_texts = ['open', 'claim', 'получить', 'открыть', 'free', 'deschide', 'ia']
                 try:
-                    all_clickable = driver.find_elements(By.CSS_SELECTOR, "button, a, div[role='button'], [onclick], .case, [class*='case']")
-                    for elem in all_clickable:
+                    all_buttons = driver.find_elements(By.CSS_SELECTOR, "button, a[role='button'], div[role='button'], [onclick], .btn, .button")
+                    for elem in all_buttons:
                         if elem.is_displayed():
                             text = elem.text.lower()
-                            classes = elem.get_attribute('class') or ''
-                            id_attr = elem.get_attribute('id') or ''
-                            data_attrs = ' '.join([elem.get_attribute(attr) or '' for attr in ['data-type', 'data-case', 'data-name']])
+                            classes = (elem.get_attribute('class') or '').lower()
                             
-                            combined = f"{text} {classes} {id_attr} {data_attrs}".lower()
-                            
-                            if case_type.lower() in combined:
-                                case_button = elem
-                                print(f"   ✓ Găsit case prin text/attribut: '{text[:50]}' - class: '{classes[:50]}'")
+                            # Caută cuvintele cheie
+                            if any(keyword in text or keyword in classes for keyword in button_texts):
+                                open_button = elem
+                                print(f"   ✓ Găsit buton prin text: '{text[:50]}' - class: '{classes[:50]}'")
                                 break
                 except Exception as e:
-                    print(f"   ⚠️ Eroare strategia 1: {e}")
+                    print(f"   ⚠️ Eroare la căutare buton: {e}")
                 
-                # Strategia 2: Caută după clase CSS specifice
-                if not case_button:
-                    case_selectors = [
-                        f".case-{case_type.lower()}",
-                        f"[data-case='{case_type.lower()}']",
-                        f"[data-type='{case_type.lower()}']",
-                        f"[class*='{case_type.lower()}'][class*='case']",
-                        f".{case_type.lower()}-case",
-                        f"#{case_type.lower()}-case",
-                        f"button[class*='{case_type.lower()}']",
-                        f"a[href*='{case_type.lower()}']"
+                # Strategia 2: Caută după clase CSS specifice buton
+                if not open_button:
+                    button_selectors = [
+                        "button.open", "button.claim", ".btn-open", ".btn-claim",
+                        "[class*='open'][class*='btn']",
+                        "[class*='claim'][class*='btn']",
+                        "button[class*='primary']",
+                        "button[class*='action']",
+                        ".primary-button", ".action-button"
                     ]
                     
-                    for selector in case_selectors:
+                    for selector in button_selectors:
                         try:
                             elements = driver.find_elements(By.CSS_SELECTOR, selector)
                             for elem in elements:
                                 if elem.is_displayed() and elem.is_enabled():
-                                    case_button = elem
-                                    print(f"   ✓ Găsit case prin selector: {selector}")
+                                    open_button = elem
+                                    print(f"   ✓ Găsit buton prin selector: {selector}")
                                     break
-                            if case_button:
+                            if open_button:
                                 break
                         except:
                             continue
                 
-                if case_button:
+                # Dacă am găsit butonul, dă click
+                if open_button:
                     try:
                         # Scroll la element
-                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", case_button)
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", open_button)
                         time.sleep(1)
                         
                         # Click
                         try:
-                            case_button.click()
+                            open_button.click()
                         except:
-                            driver.execute_script("arguments[0].click();", case_button)
+                            driver.execute_script("arguments[0].click();", open_button)
                         
-                        print(f"   ✓ Click pe case {case_type}")
+                        print(f"   ✓ Click pe butonul OPEN pentru {case_type}")
                         time.sleep(5)
                         
                         # Salvează pagina după click pentru debugging
@@ -542,9 +727,14 @@ class CasehugBot:
                             "price": "N/A"
                         })
                 else:
-                    print(f"❌ Nu am găsit case-ul {case_type}")
+                    print(f"❌ Nu am găsit butonul OPEN pentru {case_type}")
                     print(f"💡 Verifică fișierele debug pentru a vedea structura paginii")
-                    print(f"💡 Case-ul {case_type} nu este disponibil sau nu a fost găsit pe pagină")
+                    print(f"💡 Butonul OPEN nu este disponibil sau nu a fost găsit pe pagină")
+                    results.append({
+                        "case": case_type,
+                        "skin": "Buton lipsă",
+                        "price": "N/A"
+                    })
                     
             except Exception as e:
                 print(f"❌ Eroare la deschidere {case_type}: {e}")
@@ -597,16 +787,16 @@ class CasehugBot:
         driver = self.setup_browser(account_name, profile_dir)
         
         try:
-            # Login Steam (sau verifică dacă este deja logat)
-            if not self.login_steam(driver, account_name):
-                print(f"❌ Nu s-a putut loga cu {account_name}")
-                return None
+            # DIRECT LA FREE CASES - NU MAI ACCESĂM HOMEPAGE (bypass Cloudflare!)
+            print(f"\n💡 Merg direct la free-cases URLs (bypass homepage Cloudflare)")
             
-            # Deschide casele gratuite
+            # Deschide casele gratuite (direct la URL-uri specifice)
             results = self.open_free_cases(driver, account_name, available_cases)
             
-            # Obține balanța
-            balance = self.get_balance(driver)
+            # Obține balanța (dacă site-ul permite)
+            # Comentat deocamdată pentru a evita accesarea homepage-ului
+            # balance = self.get_balance(driver)
+            balance = "N/A (skip homepage)"
             
             return {
                 "account": account_name,
@@ -616,6 +806,8 @@ class CasehugBot:
             
         except Exception as e:
             print(f"❌ Eroare la procesare {account_name}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         
         finally:
