@@ -4,29 +4,32 @@ FROM python:3.11-slim-bookworm
 # Setăm variabilele de mediu
 ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
-    CHROME_BIN=/usr/bin/chromium \
-    CHROMEDRIVER_BIN=/usr/bin/chromedriver
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Instalăm dependențele sistem pentru Chrome și Selenium
+# Instalăm dependențele sistem pentru Playwright
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
     wget \
     curl \
-    unzip \
     xvfb \
     libglib2.0-0 \
     libnss3 \
-    libgconf-2-4 \
-    libfontconfig1 \
-    libxrender1 \
-    libxi6 \
-    libxtst6 \
-    libxss1 \
-    libappindicator3-1 \
-    libasound2 \
+    libnspr4 \
+    libdbus-1-3 \
+    libatk1.0-0 \
     libatk-bridge2.0-0 \
-    libgtk-3-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    libwayland-client0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,6 +41,10 @@ COPY requirements.txt .
 
 # Instalăm dependențele Python
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Instalăm Playwright browsers (Chromium)
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
 # Copiem restul aplicației
 COPY main.py .
