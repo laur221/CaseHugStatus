@@ -1,10 +1,26 @@
 services:
+  # FlareSolverr pentru bypass Cloudflare
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Europe/Bucharest
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
+    networks:
+      - casehug-network
+  
+  # Bot Casehug cu Nodriver
   casehugbot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: casehugauto
     restart: unless-stopped
+    depends_on:
+      - flaresolverr
     
     # Volumes pentru persistență date
     volumes:
@@ -16,10 +32,11 @@ services:
       - ./cookies_cont4.json:/app/cookies_cont4.json:ro  # Cookie-uri Cont 4
       - ./debug_output:/app/debug_output
     
-    # Variabile de mediu (opțional)
+    # Variabile de mediu
     environment:
       - TZ=Europe/Bucharest
       - PYTHONUNBUFFERED=1
+      - FLARESOLVERR_URL=http://flaresolverr:8191/v1
     
     # Limită resurse (opțional)
     deploy:
@@ -31,8 +48,9 @@ services:
           cpus: '1.0'
           memory: 1G
     
-    # Network mode
-    network_mode: bridge
+    # Network
+    networks:
+      - casehug-network
     
     # Logging
     logging:
@@ -40,11 +58,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    
-    # HealthCheck (opțional)
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; print('OK')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+
+networks:
+  casehug-network:
+    driver: bridge

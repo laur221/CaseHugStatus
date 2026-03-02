@@ -3,15 +3,14 @@ FROM python:3.11-slim-bookworm
 
 # Setăm variabilele de mediu
 ENV PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    DEBIAN_FRONTEND=noninteractive
 
-# Instalăm dependențele sistem pentru Playwright
+# Instalăm dependențele sistem pentru Chrome și Nodriver
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
+    gnupg \
     xvfb \
-    libglib2.0-0 \
     libnss3 \
     libnspr4 \
     libdbus-1-3 \
@@ -30,6 +29,17 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libatspi2.0-0 \
     libwayland-client0 \
+    fonts-liberation \
+    libappindicator3-1 \
+    xdg-utils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalăm Google Chrome (pentru Nodriver)
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -39,12 +49,8 @@ WORKDIR /app
 # Copiem fișierul de dependențe
 COPY requirements.txt .
 
-# Instalăm dependențele Python
+# Instalăm dependențele Python (include nodriver)
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Instalăm Playwright browsers (Chromium)
-RUN playwright install chromium
-RUN playwright install-deps chromium
 
 # Copiem restul aplicației
 COPY main.py .
@@ -57,8 +63,9 @@ RUN mkdir -p /app/profiles /app/debug_output
 # Setăm permisiuni
 RUN chmod -R 755 /app && chmod +x /app/start.sh
 
-# Configurăm Chromium pentru a rula în container
-ENV CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --headless=new"
+# Configurăm Chrome pentru a rula în container (Nodriver va folosi aceste setări)
+ENV CHROME_BIN=/usr/bin/google-chrome \
+    DISPLAY=:99
 
 # Volum pentru configurație și profile
 VOLUME ["/app/profiles", "/app/config", "/app/debug_output"]

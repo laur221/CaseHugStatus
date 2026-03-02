@@ -3,13 +3,15 @@ import json
 import time
 import asyncio
 from datetime import datetime
-from playwright.async_api import async_playwright, Browser, Page
+import nodriver as uc
+from nodriver import cdp  # Chrome DevTools Protocol pentru cookies
 import requests
+from twocaptcha import TwoCaptcha
 
 # Configurație
 CONFIG_FILE = "config.json"
 
-class CasehugBotPlaywright:
+class CasehugBotNodriver:
     def __init__(self, config_file=CONFIG_FILE):
         """Inițializează botul cu configurația din fișier"""
         with open(config_file, 'r', encoding='utf-8') as f:
@@ -18,221 +20,291 @@ class CasehugBotPlaywright:
         self.telegram_token = self.config.get('telegram_bot_token', '')
         self.telegram_chat_id = self.config.get('telegram_chat_id', '')
         self.accounts = self.config.get('accounts', [])
-        self.playwright = None
-        self.browser = None
-        self.pages = []
+        self.captcha_api_key = self.config.get('2captcha_api_key', '')
+        
+        # FlareSolverr URL: Environment variable are prioritate (pentru Docker)
+        self.flaresolverr_url = os.environ.get('FLARESOLVERR_URL', 
+                                               self.config.get('flaresolverr_url', 'http://localhost:8191/v1'))
+        
+        # Sesiuni FlareSolverr pentru fiecare cont (păstrează cookies în Docker)
+        self.flare_sessions = {}  # {account_name: session_id}
+        
+        # Detectare Docker
+        is_docker = os.environ.get('DISPLAY') == ':99' or os.environ.get('CHROME_BIN') is not None
+        
+        # În Docker: FlareSolverr PRIMARY (headless Nodriver nu trece Cloudflare)
+        # Pe Windows: Nodriver PRIMARY (11.22s, mai rapid)
+        if is_docker:
+            print(f"   🐳 Docker detectat - folosesc FlareSolverr ca PRIMARY bypass")
+            self.use_flaresolverr = True
+            self.flaresolverr_primary = True  # Folosește FlareSolverr întâi, nu ca fallback
+            print(f"   🛡️  FlareSolverr URL: {self.flaresolverr_url}")
+        else:
+            print(f"   💻 Windows detectat - folosesc Nodriver PRIMARY (11.22s avg)")
+            self.flaresolverr_primary = False
+            # Verifică dacă FlareSolverr disponibil ca fallback
+            try:
+                flaresolverr_check = requests.get(self.flaresolverr_url.replace('/v1', ''), timeout=3)
+                if flaresolverr_check.status_code == 200:
+                    print(f"   🛡️  FlareSolverr disponibil ca fallback (16.57s)")
+                    self.use_flaresolverr = True
+                else:
+                    self.use_flaresolverr = False
+            except:
+                self.use_flaresolverr = False
     
     async def setup_browser(self):
-        """Configurează Playwright browser cu stealth maxim"""
-        print("   🎭 Inițializez Playwright...")
+        """Nodriver nu necesită setup explicit - fiecare cont își va crea browser-ul"""
+        print("   🚀 Nodriver gata - fiecare cont va lansa browser automat")
+        return True
+    
+    async def create_flaresolverr_session(self, account_name):
+        """Creează sesiune FlareSolverr pentru un cont (păstrează cookies între requests)"""
+        try:
+            session_id = f"session_{account_name.replace(' ', '_')}"
+            
+            payload = {
+                "cmd": "sessions.create",
+                "session": session_id
+            }
+            
+            response = requests.post(self.flaresolverr_url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('status') == 'ok':
+                    self.flare_sessions[account_name] = session_id
+                    print(f"   ✅ Sesiune FlareSolverr creată: {session_id}")
+                    return session_id
+            
+            print(f"   ⚠️  Nu am putut crea sesiune FlareSolverr pentru {account_name}")
+            return None
+        except Exception as e:
+            print(f"   ⚠️  Eroare creare sesiune FlareSolverr: {e}")
+            return None
+    
+    async def destroy_flaresolverr_session(self, account_name):
+        """Șterge sesiune FlareSolverr după procesare cont"""
+        if account_name not in self.flare_sessions:
+            return
         
-        # Detectăm dacă suntem în Docker
-        chrome_bin = os.environ.get('CHROME_BIN')
-        is_docker = chrome_bin and os.path.exists(chrome_bin)
-        has_xvfb = os.environ.get('DISPLAY') is not None
+        try:
+            session_id = self.flare_sessions[account_name]
+            payload = {
+                "cmd": "sessions.destroy",
+                "session": session_id
+            }
+            
+            requests.post(self.flaresolverr_url, json=payload, timeout=5)
+            del self.flare_sessions[account_name]
+            print(f"   🗑️  Sesiune FlareSolverr închisă: {session_id}")
+        except:
+            pass
+    
+    async def create_page_with_stealth(self, account_name):
+        """Creează browser Nodriver cu profil persistent - bypass Cloudflare automat"""
+        # Creează folder persistent pentru acest cont
+        profile_dir = f'profiles/{account_name.replace(" ", "_")}'
+        os.makedirs(profile_dir, exist_ok=True)
+        
+        print(f"   📁 Profil persistent: {profile_dir}")
+        print(f"   🚀 Lansez Nodriver (bypass Cloudflare automat)...")
+        
+        # Detectează dacă rulează în Docker
+        is_docker = os.environ.get('DISPLAY') == ':99' or os.environ.get('CHROME_BIN') is not None
+        headless_mode = is_docker  # Headless în Docker, vizibil pe Windows
         
         if is_docker:
-            print(f"   🐳 Folosesc Chromium din Docker: {chrome_bin}")
-        if has_xvfb:
-            print(f"   🖥️  Xvfb detectat: DISPLAY={os.environ.get('DISPLAY')}")
+            print(f"   🐳 Docker detectat - rulare headless mode")
         
-        # Launch browser cu argumente anti-detection
-        launch_options = {
-            'headless': not has_xvfb,  # Vizibil dacă avem Xvfb
-            'args': [
+        # Lansează browser Nodriver cu profil persistent
+        # Nodriver rezolvă Cloudflare automat prin DevTools Protocol
+        browser = await uc.start(
+            user_data_dir=os.path.abspath(profile_dir),
+            headless=headless_mode,
+            browser_args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
-                '--window-size=1920,1080',
-                '--start-maximized',
-            ]
-        }
-        
-        if is_docker and chrome_bin:
-            launch_options['executable_path'] = chrome_bin
-        
-        self.playwright = await async_playwright().start()
-        
-        # Chromium browser (Playwright's built-in)
-        self.browser = await self.playwright.chromium.launch(**launch_options)
-        
-        print(f"   ✅ Playwright browser pornit în mod {'VIZIBIL (Xvfb)' if has_xvfb else 'headless'}")
-        return self.browser
-    
-    async def create_page_with_stealth(self, account_name):
-        """Creează o pagină nouă cu stealth maxim"""
-        # Context cu user agent real
-        context = await self.browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            viewport={'width': 1920, 'height': 1080},
-            locale='en-US',
-            timezone_id='Europe/Bucharest',
-            permissions=[],
-            color_scheme='light',
-            extra_http_headers={
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            }
+            ] + (['--start-maximized'] if not is_docker else [])
         )
         
-        page = await context.new_page()
+        # Prima tab deschisă automat
+        page = browser.main_tab
         
-        # Anti-detection scripts
-        await page.add_init_script("""
-            // Overwrite the `navigator.webdriver` property
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,
-            });
-            
-            // Overwrite the `plugins` property
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5],
-            });
-            
-            // Overwrite the `languages` property
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en'],
-            });
-            
-            // Pass the Chrome Test
-            window.chrome = {
-                runtime: {},
-            };
-            
-            // Pass the Permissions Test
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                    Promise.resolve({ state: Notification.permission }) :
-                    originalQuery(parameters)
-            );
-        """)
+        print(f"   ✅ Browser Nodriver gata pentru {account_name}")
+        print(f"   🛡️  Cloudflare va fi trecut automat (avg 11.22s)")
         
-        print(f"   ✅ Pagină creată cu stealth pentru {account_name}")
-        return page
+        return page, browser
     
-    async def load_cookies(self, page: Page, account_name):
-        """Încarcă cookie-uri salvate"""
+    async def solve_cloudflare_with_flaresolverr(self, url: str, account_name=None):
+        """Rezolvă Cloudflare folosind FlareSolverr (GRATUIT, 99% success rate)"""
         try:
-            # Detectează numărul contului
-            import re
-            match = re.search(r'(\d+)', account_name)
-            if match:
-                cont_nr = match.group(1)
-                cookies_file = f"cookies_cont{cont_nr}.json"
-            else:
-                cookies_file = "cookies.json"
+            print(f"   🛡️  Trimit request la FlareSolverr...")
+            print(f"      URL: {url}")
             
-            if not os.path.exists(cookies_file):
-                print(f"   ⚠️  Fișier cookie lipsă: {cookies_file}")
-                return False
+            # Trimite request la FlareSolverr
+            payload = {
+                "cmd": "request.get",
+                "url": url,
+                "maxTimeout": 60000  # 60 secunde timeout
+            }
             
-            print(f"   🍪 Găsit fișier cookies: {cookies_file}")
+            # Folosește sesiune dacă există (păstrează cookies)
+            if account_name and account_name in self.flare_sessions:
+                payload["session"] = self.flare_sessions[account_name]
+                print(f"      📎 Folosesc sesiune: {self.flare_sessions[account_name]}")
             
-            # Încarcă cookie-urile
-            with open(cookies_file, 'r', encoding='utf-8') as f:
-                cookies = json.load(f)
+            response = requests.post(
+                self.flaresolverr_url,
+                json=payload,
+                timeout=65  # Puțin mai mult decât maxTimeout
+            )
             
-            if not cookies or len(cookies) == 0:
-                print(f"   ⚠️  Fișier cookie gol")
-                return False
+            if response.status_code != 200:
+                print(f"   ❌ FlareSolverr eroare HTTP {response.status_code}")
+                return None
             
-            # Deschide site-ul pentru a seta domeniul
-            await page.goto("https://casehug.com")
-            await page.wait_for_timeout(1000)
+            result = response.json()
             
-            # Convertește cookies din format Selenium la Playwright
-            playwright_cookies = []
-            for cookie in cookies:
-                try:
-                    playwright_cookie = {
-                        'name': cookie['name'],
-                        'value': cookie['value'],
-                        'domain': cookie.get('domain', '.casehug.com'),
-                        'path': cookie.get('path', '/'),
-                    }
-                    if 'expires' in cookie and cookie['expires']:
-                        playwright_cookie['expires'] = float(cookie['expires'])
-                    if 'httpOnly' in cookie:
-                        playwright_cookie['httpOnly'] = cookie['httpOnly']
-                    if 'secure' in cookie:
-                        playwright_cookie['secure'] = cookie['secure']
-                    if 'sameSite' in cookie:
-                        playwright_cookie['sameSite'] = cookie['sameSite']
-                    
-                    playwright_cookies.append(playwright_cookie)
-                except:
-                    pass
+            if result.get('status') != 'ok':
+                print(f"   ❌ FlareSolverr eroare: {result.get('message', 'Unknown error')}")
+                return None
             
-            # Adaugă cookies
-            await page.context.add_cookies(playwright_cookies)
-            print(f"   ✅ Cookie-uri încărcate: {len(playwright_cookies)}/{len(cookies)}")
+            solution = result.get('solution', {})
+            cookies = solution.get('cookies', [])
+            user_agent = solution.get('userAgent', '')
+            response_body = solution.get('response', '')  # HTML-ul paginii
             
-            # Refresh pentru a activa cookies
-            await page.reload()
-            await page.wait_for_timeout(2000)
+            if not cookies:
+                print(f"   ⚠️  FlareSolverr nu a returnat cookies")
+                return None
             
-            return True
+            print(f"   ✅ FlareSolverr SUCCESS! Primite {len(cookies)} cookies")
+            print(f"   🍪 Cookies: {', '.join([c['name'] for c in cookies[:5]])}...")
+            
+            return {
+                'cookies': cookies,
+                'user_agent': user_agent,
+                'html': response_body  # HTML-ul paginii fără Cloudflare
+            }
+            
+        except requests.exceptions.Timeout:
+            print(f"   ❌ FlareSolverr timeout (>60s) - site-ul e prea lent sau FlareSolverr blocat")
+            return None
+        except Exception as e:
+            print(f"   ❌ Eroare FlareSolverr: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    async def solve_turnstile_with_2captcha(self, page, sitekey: str, url: str):
+        """Rezolvă Cloudflare Turnstile folosind 2Captcha API (FALLBACK)"""
+        try:
+            print(f"   🔐 Trimit challenge la 2Captcha (FALLBACK)...")
+            print(f"      Sitekey: {sitekey[:20]}...")
+            print(f"      URL: {url}")
+            
+            # Trimite challenge la 2Captcha
+            result = self.captcha_solver.turnstile(
+                sitekey=sitekey,
+                url=url
+            )
+            
+            token = result.get('code')
+            if not token:
+                print(f"   ❌ 2Captcha nu a returnat token")
+                return None
+            
+            print(f"   ✅ Token primit de la 2Captcha: {token[:50]}...")
+            return token
             
         except Exception as e:
-            print(f"   ⚠️ Eroare la încărcare cookies: {e}")
-            return False
+            print(f"   ❌ Eroare 2Captcha: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
-    async def check_cloudflare(self, page: Page):
-        """Verifică dacă Cloudflare este activ"""
+    async def check_cloudflare(self, page):
+        """Verifică dacă Cloudflare a fost trecut cu succes (cookies deja injectate în Docker)"""
         try:
-            content = await page.content()
+            # În Docker: Cookies deja injectate în open_free_case(), doar verificăm
+            # Pe Windows: Nodriver rezolvă automat
+            is_docker = os.environ.get('DISPLAY') == ':99'
+            
+            if is_docker and hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
+                print(f"   🐳 Verific dacă Cloudflare a fost trecut cu FlareSolverr cookies...")
+                await asyncio.sleep(2)  # Așteaptă scurt ca pagina să se încarce complet
+                
+                content = await page.get_content()
+                has_cloudflare = 'cloudflare' in content.lower() or 'checking your browser' in content.lower()
+                
+                if has_cloudflare:
+                    print("   ❌ Cloudflare ÎNCĂ prezent după injectare cookies FlareSolverr")
+                    return False
+                else:
+                    print("   ✅ Cloudflare trecut cu FlareSolverr cookies!")
+                    return True
+            
+            # Pe Windows: Nodriver rezolvă automat - așteaptă mai mult
+            first_wait = 15 if is_docker else 10
+            second_wait = 15 if is_docker else 10
+            
+            print(f"   🛡️  Aștept rezolvare automată Cloudflare (Nodriver - {first_wait}s)...")
+            await asyncio.sleep(first_wait)
+            
+            # Verifică dacă Cloudflare încă există
+            content = await page.get_content()
             content_lower = content.lower()
             
-            if any(indicator in content_lower for indicator in ['cloudflare', 'checking your browser', 'just a moment', 'ddos protection']):
-                print("   ⚠️ Cloudflare challenge detectat!")
+            has_cloudflare = any(indicator in content_lower for indicator in [
+                'cloudflare', 'checking your browser', 'just a moment', 
+                'turnstile', 'performing security verification'
+            ])
+            
+            if has_cloudflare:
+                print(f"   ⚠️  Cloudflare încă prezent - aștept încă {second_wait}s...")
+                await asyncio.sleep(second_wait)
                 
-                # Așteaptă automat pentru Cloudflare challenge (Playwright e mai bun la asta)
-                print("   🕐 Aștept Cloudflare challenge să se rezolve (max 30s)...")
+                content = await page.get_content()
+                has_cloudflare = 'cloudflare' in content.lower()
                 
-                # Așteaptă ca Cloudflare să dispară
-                try:
-                    await page.wait_for_function(
-                        "() => !document.body.textContent.includes('Cloudflare') && !document.body.textContent.includes('Just a moment')",
-                        timeout=30000
-                    )
-                    print("   ✅ Cloudflare challenge trecut!")
-                    return True
-                except:
-                    print("   ❌ Cloudflare challenge nu a fost trecut în 30s")
+                if has_cloudflare:
+                    print("   ⚠️  Cloudflare NU trecut automat - verificare manuală")
                     return False
             
+            print("   ✅ Cloudflare trecut cu succes!")
             return True
             
         except Exception as e:
-            print(f"   ⚠️ Eroare verificare Cloudflare: {e}")
-            return True
+            print(f"   ⚠️  Eroare verificare Cloudflare: {e}")
+            import traceback
+            traceback.print_exc()
+            return True  # Continuăm oricum
     
-    async def save_page_debug_info(self, page: Page, account_name, page_name):
+    async def save_page_debug_info(self, page, account_name, page_name):
         """Salvează HTML și screenshot pentru debugging"""
         try:
             debug_dir = "debug_output"
             os.makedirs(debug_dir, exist_ok=True)
             
             # Salvează HTML
-            content = await page.content()
+            content = await page.get_content()
             html_file = os.path.join(debug_dir, f"debug_{account_name.replace(' ', '_')}_{page_name}.html")
             with open(html_file, 'w', encoding='utf-8') as f:
                 f.write(content)
             
             # Salvează screenshot
             png_file = os.path.join(debug_dir, f"debug_{account_name.replace(' ', '_')}_{page_name}.png")
-            await page.screenshot(path=png_file, full_page=True)
+            await page.save_screenshot(png_file)
             
             print(f"   📄 Debug salvat: {os.path.basename(html_file)}, {os.path.basename(png_file)}")
             
         except Exception as e:
             print(f"   ⚠️ Eroare la salvare debug: {e}")
     
-    async def open_free_case(self, page: Page, account_name, case_type):
+    async def open_free_case(self, page, account_name, case_type):
         """Deschide un free case specific"""
         case_urls = {
             "discord": "https://casehug.com/free-cases/discord",
@@ -249,11 +321,46 @@ class CasehugBotPlaywright:
         print(f"   🌐 Navighez direct la: {case_url}")
         
         try:
-            # Navigare directă
-            await page.goto(case_url, wait_until='domcontentloaded', timeout=60000)
-            await page.wait_for_timeout(3000)
+            # În Docker: Obține cookies de la FlareSolverr ÎNAINTE de navigare
+            if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary and self.use_flaresolverr:
+                print(f"   🐳 Docker: Folosesc FlareSolverr pentru bypass Cloudflare...")
+                flare_result = await self.solve_cloudflare_with_flaresolverr(case_url, account_name=account_name)
+                
+                if flare_result and flare_result.get('cookies'):
+                    print(f"   🍪 Injectez {len(flare_result['cookies'])} cookies ÎNAINTE de navigare...")
+                    
+                    # Setează cookies în browser ÎNAINTE de navigare
+                    for cookie in flare_result['cookies']:
+                        try:
+                            # Construiește cookie în format CDP
+                            cookie_params = {
+                                'name': cookie['name'],
+                                'value': cookie['value'],
+                                'domain': cookie.get('domain', '.casehug.com'),
+                                'path': cookie.get('path', '/'),
+                                'secure': cookie.get('secure', False),
+                                'http_only': cookie.get('httpOnly', False)
+                            }
+                            
+                            # Adaugă sameSite dacă există
+                            if 'sameSite' in cookie:
+                                cookie_params['same_site'] = cookie['sameSite']
+                            
+                            await page.send(cdp.network.set_cookie(**cookie_params))
+                        except Exception as cookie_err:
+                            # Ignoră erori pentru cookies individuale (unele pot fi invalide)
+                            pass
+                    
+                    print(f"   ✅ Cookies injectate - navighez la pagină...")
+                    await asyncio.sleep(1)
+                else:
+                    print("   ⚠️  FlareSolverr nu a putut rezolva - continui fără cookies")
             
-            # Check Cloudflare
+            # Navigare directă cu Nodriver (acum cu cookies deja setate în Docker)
+            await page.get(case_url)
+            await asyncio.sleep(3)
+            
+            # Check Cloudflare (Nodriver rezolvă automat)
             cloudflare_ok = await self.check_cloudflare(page)
             
             # Salvează debug
@@ -261,34 +368,47 @@ class CasehugBotPlaywright:
             
             # Scroll
             await page.evaluate("window.scrollTo(0, 400)")
-            await page.wait_for_timeout(1000)
+            await asyncio.sleep(1)
             
             # Caută butonul OPEN/CLAIM
-            print(f"   🔍 Caut butonul OPEN/CLAIM...")
+            print(f"   🔍 Caut butonul 'Open for Free'...")
             
-            # Selectoare posibile
-            button_selectors = [
-                'button:has-text("Open")',
-                'button:has-text("Claim")',
-                'button:has-text("Free")',
-                'button:has-text("Get")',
-                'a:has-text("Open")',
-                'a:has-text("Claim")',
-                '.btn:has-text("Open")',
-                '.btn:has-text("Claim")',
-                'button[class*="open"]',
-                'button[class*="claim"]',
-                'button[class*="primary"]',
-            ]
+            # Selectoare posibile - Nodriver foloseste CSS selectors
+            button_texts = ["Open for Free", "Open", "Claim", "Free", "Get"]
             
             button = None
-            for selector in button_selectors:
+            for text in button_texts:
                 try:
-                    button = await page.query_selector(selector)
-                    if button and await button.is_visible():
-                        print(f"   ✓ Găsit buton cu: {selector}")
+                    # Caută butoane cu text specific
+                    buttons = await page.select_all("button")
+                    for btn in buttons:
+                        try:
+                            btn_text = await btn.text
+                            if btn_text and text.lower() in btn_text.lower():
+                                button = btn
+                                print(f"   ✓ Găsit buton cu text: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    if button:
                         break
-                except:
+                    
+                    # Încearcă și cu link-uri
+                    links = await page.select_all("a")
+                    for link in links:
+                        try:
+                            link_text = await link.text
+                            if link_text and text.lower() in link_text.lower():
+                                button = link
+                                print(f"   ✓ Găsit link cu text: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    if button:
+                        break
+                except Exception as e:
                     continue
             
             if not button:
@@ -300,13 +420,13 @@ class CasehugBotPlaywright:
                 }
             
             # Click pe buton
-            await button.scroll_into_view_if_needed()
-            await page.wait_for_timeout(500)
+            await button.scroll_into_view()
+            await asyncio.sleep(0.5)
             await button.click()
             print(f"   ✓ Click pe butonul OPEN")
             
             # Așteaptă rezultatul
-            await page.wait_for_timeout(5000)
+            await asyncio.sleep(5)
             
             # Salvează debug după click
             await self.save_page_debug_info(page, account_name, f"after_open_{case_type}")
@@ -317,25 +437,24 @@ class CasehugBotPlaywright:
             skin_name = "Necunoscut"
             price = "N/A"
             
-            # Caută skin
+            # Caută skin prin selectors comuni
             skin_selectors = [
                 '.item-name', '.skin-name', '.reward-name',
-                '.item-title', '.skin-title', '.reward-title',
-                '[class*="item"][class*="name"]',
-                '[class*="skin"][class*="name"]',
-                'h2', 'h3', 'h4'
+                '.item-title', '.skin-title', '.reward-title'
             ]
             
             for selector in skin_selectors:
                 try:
-                    elements = await page.query_selector_all(selector)
+                    elements = await page.select_all(selector)
                     for elem in elements:
-                        if await elem.is_visible():
-                            text = (await elem.text_content()).strip()
-                            if text and len(text) > 3 and '-' in text or '|' in text or '(' in text:
-                                skin_name = text
+                        try:
+                            text = await elem.text
+                            if text and len(text) > 3 and ('-' in text or '|' in text or '(' in text):
+                                skin_name = text.strip()
                                 print(f"   ✓ Skin: {skin_name}")
                                 break
+                        except:
+                            continue
                     if skin_name != "Necunoscut":
                         break
                 except:
@@ -343,20 +462,21 @@ class CasehugBotPlaywright:
             
             # Caută preț
             price_selectors = [
-                '.price', '.value', '.amount', '.cost',
-                '[class*="price"]', '[class*="value"]'
+                '.price', '.value', '.amount', '.cost'
             ]
             
             for selector in price_selectors:
                 try:
-                    elements = await page.query_selector_all(selector)
+                    elements = await page.select_all(selector)
                     for elem in elements:
-                        if await elem.is_visible():
-                            text = (await elem.text_content()).strip()
+                        try:
+                            text = await elem.text
                             if text and ('$' in text or '€' in text or any(c.isdigit() for c in text)):
-                                price = text
+                                price = text.strip()
                                 print(f"   ✓ Preț: {price}")
                                 break
+                        except:
+                            continue
                     if price != "N/A":
                         break
                 except:
@@ -389,20 +509,21 @@ class CasehugBotPlaywright:
         print(f"🎮 Procesez contul: {account_name}")
         print(f"{'='*50}")
         
-        # Creează pagină nouă pentru acest cont
-        page = await self.create_page_with_stealth(account_name)
+        # În Docker: Crează sesiune FlareSolverr pentru acest cont  
+        if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
+            await self.create_flaresolverr_session(account_name)
+        
+        # Creează browser Nodriver cu profil persistent
+        page, browser = await self.create_page_with_stealth(account_name)
         
         try:
-            # Încarcă cookies
-            await self.load_cookies(page, account_name)
-            
             # Procesează fiecare case
             results = []
             for case_type in available_cases:
                 result = await self.open_free_case(page, account_name, case_type)
                 if result:
                     results.append(result)
-                await page.wait_for_timeout(2000)
+                await asyncio.sleep(2)
             
             return {
                 "account": account_name,
@@ -416,7 +537,16 @@ class CasehugBotPlaywright:
             traceback.print_exc()
             return None
         finally:
-            self.pages.append(page)
+            # Închide sesiune FlareSolverr în Docker
+            if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
+                await self.destroy_flaresolverr_session(account_name)
+            
+            # Închide browser-ul
+            try:
+                await browser.stop()
+                print(f"   ✅ Browser închis pentru {account_name}")
+            except:
+                pass
     
     def send_telegram_message(self, message):
         """Trimite mesaj pe Telegram"""
@@ -465,18 +595,25 @@ class CasehugBotPlaywright:
     
     async def run(self):
         """Rulează botul"""
-        print("🚀 Pornire CasehugBot (Playwright)...")
-        print(f"📊 Număr conturi: {len(self.accounts)}\n")
+        print("🚀 Pornire CasehugBot (Nodriver)...")
+        print(f"📊 Număr conturi: {len(self.accounts)}")
+        print("🛡️  Bypass Cloudflare: AUTOMAT (Nodriver - 11.22s avg)\n")
         
         try:
-            # Setup browser
+            # Setup browser (minimal pentru Nodriver)
             await self.setup_browser()
             
-            # Procesează fiecare cont
+            # Procesează TOATE conturile
             all_results = []
             for account in self.accounts:
+                print(f"\n🧪 Test cu: {account['name']}\n")
                 result = await self.process_account(account)
                 all_results.append(result)
+                
+                # Pauză între conturi
+                if account != self.accounts[-1]:  # Nu aștepta după ultimul cont
+                    print("\n⏳ Pauză 5s până la următorul cont...")
+                    await asyncio.sleep(5)
             
             # Trimite raport Telegram
             if any(r is not None for r in all_results):
@@ -489,15 +626,9 @@ class CasehugBotPlaywright:
             print(f"❌ Eroare: {e}")
             import traceback
             traceback.print_exc()
-        finally:
-            # Cleanup
-            if self.browser:
-                await self.browser.close()
-            if self.playwright:
-                await self.playwright.stop()
 
 async def main():
-    bot = CasehugBotPlaywright()
+    bot = CasehugBotNodriver()
     await bot.run()
 
 if __name__ == "__main__":

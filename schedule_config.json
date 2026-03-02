@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "run_time": "10:00",
+  "check_interval_minutes": 5,
+  "require_steam_login": true,
+  "run_on_startup": false,
+  "min_hours_between_runs": 23,
+  "window_mode": "minimized",
+  "accounts_with_steam": [
+    "Cont 1",
+    "Cont 2"
+  ],
+  "_comments": {
+    "enabled": "Activează/dezactivează scheduler-ul complet",
+    "run_time": "Ora zilnică la care să ruleze botul (format 24h: HH:MM)",
+    "check_interval_minutes": "La câte minute verifică dacă trebuie să ruleze",
+    "require_steam_login": "Verifică dacă Steam este pornit și logat înainte de rulare",
+    "run_on_startup": "Rulează imediat la pornirea scheduler-ului (ignoră ora, doar prima dată)",
+    "min_hours_between_runs": "Minim ore între 2 rulări (previne rulări multiple pe zi)",
+    "window_mode": "Modul fereastră: minimized (minimizat) / hidden (ascuns) / normal",
+    "accounts_with_steam": "Lista numelor conturilor care folosesc Steam pentru autentificare"
+  }
+}
