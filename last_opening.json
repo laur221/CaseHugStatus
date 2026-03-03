@@ -1,18 +1,18 @@
 {
   "Cont 1": {
-    "last_opening": null,
-    "last_check": "2026-03-03T10:06:52.495429"
+    "last_opening": "2026-03-03T10:09:59.260274",
+    "last_check": "2026-03-03T10:09:59.260274"
   },
   "Cont 2": {
-    "last_opening": "2026-03-03T10:07:48.427394",
-    "last_check": "2026-03-03T10:07:48.427394"
+    "last_opening": "2026-03-03T10:09:59.261003",
+    "last_check": "2026-03-03T10:09:59.261003"
   },
   "Cont 3": {
-    "last_opening": null,
-    "last_check": "2026-03-03T10:08:47.291978"
+    "last_opening": "2026-03-03T10:09:59.261382",
+    "last_check": "2026-03-03T10:09:59.261382"
   },
   "Cont 4": {
-    "last_opening": null,
-    "last_check": null
+    "last_opening": "2026-03-03T10:09:59.261837",
+    "last_check": "2026-03-03T10:09:59.261837"
   }
 }
