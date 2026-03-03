@@ -43,8 +43,9 @@ function Install-Task {
         # Creează acțiunea
         $action = New-ScheduledTaskAction -Execute $scriptPath -WorkingDirectory $workingDir
         
-        # Creează trigger (la pornirea sistemului)
+        # Creează trigger (la pornirea sistemului + repetare la 5 minute)
         $trigger = New-ScheduledTaskTrigger -AtStartup
+        $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
         
         # Setări avansate
         $settings = New-ScheduledTaskSettingsSet `
@@ -67,16 +68,17 @@ function Install-Task {
             -Trigger $trigger `
             -Settings $settings `
             -Principal $principal `
-            -Description "Rulare automată CasehugBot cu verificare Steam și programare zilnică" `
+            -Description "Rulare automată CasehugBot cu tracking individual per cont (verificare la 5 minute)" `
             -Force | Out-Null
         
         Write-Host "✅ Task Scheduler instalat cu succes!" -ForegroundColor Green
         Write-Host ""
         Write-Host "📋 Detalii task:" -ForegroundColor Cyan
         Write-Host "   Nume: $taskName"
-        Write-Host "   Trigger: La pornirea sistemului"
+        Write-Host "   Trigger: La pornirea sistemului + repetare la fiecare 5 minute"
         Write-Host "   Script: $scriptPath"
         Write-Host "   Working Dir: $workingDir"
+        Write-Host "   Sistem: Tracking individual per cont (24h de la ultima deschidere)"
         Write-Host ""
         
         return $true

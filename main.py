@@ -7,9 +7,11 @@ import nodriver as uc
 from nodriver import cdp  # Chrome DevTools Protocol pentru cookies
 import requests
 # from twocaptcha import TwoCaptcha  # Commented - not used
+import ctypes  # Pentru Windows API - minimizare ferestre
 
 # Configurație
 CONFIG_FILE = "config.json"
+LAST_OPENING_FILE = "last_opening.json"
 
 class CasehugBotNodriver:
     def __init__(self, config_file=CONFIG_FILE):
@@ -57,6 +59,50 @@ class CasehugBotNodriver:
         """Nodriver nu necesită setup explicit - fiecare cont își va crea browser-ul"""
         print("   🚀 Nodriver gata - fiecare cont va lansa browser automat")
         return True
+    
+    def load_last_opening(self):
+        """Încarcă tracking-ul ultimelor deschideri"""
+        if not os.path.exists(LAST_OPENING_FILE):
+            # Creează fișier nou cu toate conturile
+            default_data = {}
+            for account in self.accounts:
+                account_name = account.get('name', '')
+                if account_name:
+                    default_data[account_name] = {
+                        "last_opening": None,
+                        "last_check": None
+                    }
+            
+            with open(LAST_OPENING_FILE, 'w', encoding='utf-8') as f:
+                json.dump(default_data, f, indent=2, ensure_ascii=False)
+            
+            return default_data
+        
+        try:
+            with open(LAST_OPENING_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    
+    def save_account_timestamp(self, account_name, had_success=True):
+        """Salvează timestamp pentru un cont după procesare"""
+        last_opening = self.load_last_opening()
+        
+        if account_name not in last_opening:
+            last_opening[account_name] = {}
+        
+        timestamp = datetime.now().isoformat()
+        
+        # Dacă a deschis case cu succes, salvează ca last_opening
+        # Altfel, doar actualizează last_check (pentru tracking)
+        if had_success:
+            last_opening[account_name]['last_opening'] = timestamp
+            print(f"   ✅ Timestamp salvat pentru {account_name}: {timestamp}")
+        
+        last_opening[account_name]['last_check'] = timestamp
+        
+        with open(LAST_OPENING_FILE, 'w', encoding='utf-8') as f:
+            json.dump(last_opening, f, indent=2, ensure_ascii=False)
     
     async def create_flaresolverr_session(self, account_name):
         """Creează sesiune FlareSolverr pentru un cont (păstrează cookies între requests)"""
@@ -127,12 +173,37 @@ class CasehugBotNodriver:
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-infobars',
-                '--start-minimized',  # Browser minimizat în background
             ]
         )
         
         # Prima tab deschisă automat
         page = browser.main_tab
+        
+        # Minimizează fereastra Chrome (doar pe Windows, nu în Docker)
+        if not is_docker:
+            await asyncio.sleep(1)  # Așteaptă ca fereastra să apară
+            try:
+                user32 = ctypes.windll.user32
+                
+                # Găsește și minimizează toate ferestrele Chrome
+                def enum_callback(hwnd, _):
+                    if user32.IsWindowVisible(hwnd):
+                        length = user32.GetWindowTextLengthW(hwnd)
+                        if length > 0:
+                            buffer = ctypes.create_unicode_buffer(length + 1)
+                            user32.GetWindowTextW(hwnd, buffer, length + 1)
+                            title = buffer.value
+                            
+                            # Minimizează dacă e Chrome
+                            if 'Chrome' in title or 'casehug.com' in title.lower():
+                                user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
+                    return True
+                
+                EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+                user32.EnumWindows(EnumWindowsProc(enum_callback), 0)
+                print(f"   🪟 Fereastră Chrome minimizată în taskbar")
+            except Exception as e:
+                print(f"   ⚠️ Nu s-a putut minimiza: {e}")
         
         print(f"   ✅ Browser Nodriver gata pentru {account_name}")
         print(f"   🛡️  Cloudflare va fi trecut automat (avg 11.22s)")
@@ -1211,6 +1282,14 @@ class CasehugBotNodriver:
                 print(f"\n🧪 Test cu: {account['name']}\n")
                 result = await self.process_account(account)
                 all_results.append(result)
+                
+                # Salvează timestamp dacă a procesat cu succes
+                if result and result.get('results'):
+                    # A deschis cel puțin un case cu succes
+                    self.save_account_timestamp(account['name'], had_success=True)
+                elif result:
+                    # A fost procesat dar fără case-uri (cooldown, locked, etc)
+                    self.save_account_timestamp(account['name'], had_success=False)
                 
                 # Pauză între conturi
                 if account != self.accounts[-1]:  # Nu aștepta după ultimul cont
