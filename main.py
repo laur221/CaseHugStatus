@@ -359,27 +359,6 @@ class CasehugBotNodriver:
             traceback.print_exc()
             return True  # Continuăm oricum
     
-    async def save_page_debug_info(self, page, account_name, page_name):
-        """Salvează HTML și screenshot pentru debugging"""
-        try:
-            debug_dir = "debug_output"
-            os.makedirs(debug_dir, exist_ok=True)
-            
-            # Salvează HTML
-            content = await page.get_content()
-            html_file = os.path.join(debug_dir, f"debug_{account_name.replace(' ', '_')}_{page_name}.html")
-            with open(html_file, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            # Salvează screenshot
-            png_file = os.path.join(debug_dir, f"debug_{account_name.replace(' ', '_')}_{page_name}.png")
-            await page.save_screenshot(png_file)
-            
-            print(f"   📄 Debug salvat: {os.path.basename(html_file)}, {os.path.basename(png_file)}")
-            
-        except Exception as e:
-            print(f"   ⚠️ Eroare la salvare debug: {e}")
-    
     async def check_steam_login(self, page, account_name):
         """Verifică dacă utilizatorul este logat cu Steam (verifică balanta în header)"""
         try:
@@ -705,9 +684,6 @@ class CasehugBotNodriver:
             if not available_cases:
                 print(f"   ⚠️  Niciun case disponibil pentru {account_name}")
             
-            # Salvează debug
-            await self.save_page_debug_info(page, account_name, "available_cases_check")
-            
             return available_cases
             
         except Exception as e:
@@ -775,9 +751,6 @@ class CasehugBotNodriver:
             
             # Check Cloudflare (Nodriver rezolvă automat)
             cloudflare_ok = await self.check_cloudflare(page)
-            
-            # Salvează debug
-            await self.save_page_debug_info(page, account_name, f"free_case_{case_type}")
             
             # Scroll
             await page.evaluate("window.scrollTo(0, 400)")
@@ -853,9 +826,6 @@ class CasehugBotNodriver:
             
             # Așteaptă rezultatul
             await asyncio.sleep(5)
-            
-            # Salvează debug după click
-            await self.save_page_debug_info(page, account_name, f"after_open_{case_type}")
             
             # Verifică dacă există mesaj de eroare (playtime insuficient)
             content = await page.get_content()
@@ -1042,14 +1012,6 @@ class CasehugBotNodriver:
             
             # Obține HTML-ul paginii
             content = await page.get_content()
-            
-            # Salvează debug HTML
-            debug_dir = "debug_output"
-            os.makedirs(debug_dir, exist_ok=True)
-            debug_html_path = os.path.join(debug_dir, f"debug_{account_name.replace(' ', '_')}_profile.html")
-            with open(debug_html_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            print(f"   📄 Debug profile salvat: {debug_html_path}")
             
             # Caută toate skin-urile cu label "New"
             import re

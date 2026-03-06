@@ -41,6 +41,11 @@ profile_*/
 # Config with sensitive data
 config.json
 
+# Runtime files (created by bot)
+last_opening.json
+schedule_config.json
+scheduler.lock
+
 # Debug output
 debug_output/
 debug_*.html

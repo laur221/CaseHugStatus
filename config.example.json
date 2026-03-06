@@ -3,24 +3,24 @@
   "telegram_chat_id": "YOUR_CHAT_ID_HERE",
   "accounts": [
     {
-      "name": "Cont 1",
+      "name": "Account 1",
       "profile_dir": "profile_1",
-      "available_cases": ["discord", "steam", "daily"]
+      "available_cases": ["discord", "steam", "wood"]
     },
     {
-      "name": "Cont 2",
+      "name": "Account 2",
       "profile_dir": "profile_2",
-      "available_cases": ["discord", "steam", "daily"]
+      "available_cases": ["discord", "steam", "wood"]
     },
     {
-      "name": "Cont 3 (fără Steam case)",
+      "name": "Account 3 (without Steam case)",
       "profile_dir": "profile_3",
-      "available_cases": ["discord", "daily"]
+      "available_cases": ["discord", "wood"]
     },
     {
-      "name": "Cont 4 (fără Steam case)",
+      "name": "Account 4 (without Steam case)",
       "profile_dir": "profile_4",
-      "available_cases": ["discord", "daily"]
+      "available_cases": ["discord", "wood"]
     }
   ]
 }
