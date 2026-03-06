@@ -173,6 +173,7 @@ class CasehugBotNodriver:
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-infobars',
+                '--mute-audio',  # Dezactivează sunetul
             ]
         )
         
@@ -959,35 +960,34 @@ class CasehugBotNodriver:
             
             if not available_cases:
                 print(f"⚠️  Niciun case disponibil pentru {account_name} astăzi")
-                return {
-                    "account": account_name,
-                    "results": [],
-                    "balance": "N/A"
-                }
-            
-            # Procesează fiecare case FĂRĂ să închid browserul
-            results = []
-            for idx, case_type in enumerate(available_cases, 1):
-                print(f"\n   📦 Procesez case {idx}/{len(available_cases)}: {case_type.upper()}")
-                
-                try:
-                    # Găsește și click butonul direct pe pagina /free-cases
-                    result = await self.open_free_case_on_page(page, account_name, case_type)
-                    if result:
-                        results.append(result)
+                print(f"   ℹ️  Verific totuși pagina de profil pentru skin-uri noi...")
+            else:
+                # Procesează fiecare case FĂRĂ să închid browserul
+                results = []
+                for idx, case_type in enumerate(available_cases, 1):
+                    print(f"\n   📦 Procesez case {idx}/{len(available_cases)}: {case_type.upper()}")
                     
-                    # Revino la /free-cases pentru următorul case
-                    if idx < len(available_cases):
-                        print(f"   ↩️  Revin la /free-cases pentru următorul case...")
-                        await page.get("https://casehug.com/free-cases")
-                        await asyncio.sleep(3)
+                    try:
+                        # Găsește și click butonul direct pe pagina /free-cases
+                        result = await self.open_free_case_on_page(page, account_name, case_type)
+                        # Nu mai salvăm rezultatul aici - vom extrage din profil
                         
-                except Exception as e:
-                    print(f"   ❌ Eroare la procesare {case_type}: {e}")
-                
-                # Pauză între case-uri
-                if idx < len(available_cases):
-                    await asyncio.sleep(2)
+                        # Revino la /free-cases pentru următorul case
+                        if idx < len(available_cases):
+                            print(f"   ↩️  Revin la /free-cases pentru următorul case...")
+                            await page.get("https://casehug.com/free-cases")
+                            await asyncio.sleep(3)
+                            
+                    except Exception as e:
+                        print(f"   ❌ Eroare la procesare {case_type}: {e}")
+                    
+                    # Pauză între case-uri
+                    if idx < len(available_cases):
+                        await asyncio.sleep(2)
+            
+            # După ce am deschis toate case-urile, extrage skin-urile noi din profil
+            print(f"\n   🔍 Extrag rezultatele din pagina de profil...")
+            results = await self.extract_new_skins_from_profile(page, account_name)
             
             return {
                 "account": account_name,
@@ -1027,6 +1027,118 @@ class CasehugBotNodriver:
             # Închide sesiune FlareSolverr în Docker
             if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
                 await self.destroy_flaresolverr_session(account_name)
+    
+    async def extract_new_skins_from_profile(self, page, account_name):
+        """Extrage skin-urile noi din pagina de profil (https://casehug.com/user-account)"""
+        print(f"\n   📊 Extrag skin-urile noi din pagina de profil...")
+        
+        try:
+            # Navighează la pagina de profil
+            await page.get("https://casehug.com/user-account")
+            print(f"   🌐 Navigat la https://casehug.com/user-account")
+            
+            # Așteaptă încărcarea paginii
+            await asyncio.sleep(4)
+            
+            # Obține HTML-ul paginii
+            content = await page.get_content()
+            
+            # Salvează debug HTML
+            debug_dir = "debug_output"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_html_path = os.path.join(debug_dir, f"debug_{account_name.replace(' ', '_')}_profile.html")
+            with open(debug_html_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"   📄 Debug profile salvat: {debug_html_path}")
+            
+            # Caută toate skin-urile cu label "New"
+            import re
+            
+            # Pattern: găsește toate div-urile cu data-testid="your-drop-card-label" care conțin "New"
+            # Apoi extrage datele din același container
+            new_skins = []
+            
+            # Split HTML în secțiuni pentru fiecare card de skin
+            # Găsește toate aparițiile de "your-drop-card-label"
+            pattern = r'<div data-testid="your-drop-card-label"[^>]*>([^<]+)</div>'
+            labels = re.finditer(pattern, content)
+            
+            for label_match in labels:
+                label_text = label_match.group(1).strip()
+                
+                # Verifică dacă label-ul este "New"
+                if label_text.lower() == "new":
+                    # Găsește începutul container-ului (urcă până la div-ul părinte mare)
+                    # Caută backward până găsește div-ul care conține toate datele
+                    start_pos = label_match.start()
+                    
+                    # Caută înapoi până găsește div-ul principal (class="sc-965b1227-6")
+                    search_back = content[max(0, start_pos - 5000):start_pos]
+                    container_match = re.search(r'<div class="sc-965b1227-6[^"]*">', search_back)
+                    
+                    if container_match:
+                        container_start = start_pos - len(search_back) + container_match.start()
+                        # Extrage secțiunea (următoarele 3000 caractere)
+                        section = content[container_start:start_pos + 3000]
+                        
+                        # Extrage datele din această secțiune
+                        name_match = re.search(r'<div data-testid="your-drop-name"[^>]*>([^<]+)</div>', section)
+                        category_match = re.search(r'<div data-testid="your-drop-category"[^>]*>([^<]+)</div>', section)
+                        price_match = re.search(r'<span data-testid="your-drop-price"[^>]*>([^<]+)</span>', section)
+                        case_type_match = re.search(r'<div data-testid="your-drops-hover-date"[^>]*>([^<]+)</div>', section)
+                        
+                        if name_match and category_match and price_match:
+                            weapon_name = name_match.group(1).strip()
+                            skin_category = category_match.group(1).strip()
+                            price = price_match.group(1).strip()
+                            case_type = case_type_match.group(1).strip().lower() if case_type_match else "unknown"
+                            
+                            # Extrage culoarea (raritatea) din gradient SVG
+                            color_match = re.search(r'stop-color="([^"]+)"', section)
+                            rarity_color = color_match.group(1).upper() if color_match else "#FFFFFF"
+                            
+                            # Mapează culoarea la raritate și emoji
+                            rarity_map = {
+                                "#A3A7BB": ("⚪", "Consumer/Industrial"),
+                                "#5E98D9": ("🔵", "Mil-Spec"),
+                                "#8847FF": ("🟣", "Restricted"),
+                                "#D32CE6": ("🟣", "Restricted"),  # Purple variations
+                                "#EB4B4B": ("🔴", "Covert"),
+                                "#E4AE39": ("🟡", "Classified"),
+                                "#F93AA6": ("🩷", "Classified"),  # Pink
+                                "#FFD700": ("🟡", "Contraband"),
+                            }
+                            
+                            # Găsește cel mai apropiat match pentru culoare
+                            rarity_emoji = "⚪"
+                            for color_code, (emoji, name) in rarity_map.items():
+                                if rarity_color.startswith(color_code[:4]):  # Match primele 4 caractere
+                                    rarity_emoji = emoji
+                                    break
+                            
+                            skin_full_name = f"{weapon_name} | {skin_category}"
+                            
+                            new_skins.append({
+                                "case": case_type,
+                                "skin": skin_full_name,
+                                "price": price,
+                                "rarity": rarity_emoji
+                            })
+                            
+                            print(f"   🆕 Găsit skin nou: {rarity_emoji} {case_type.upper()} - {skin_full_name} - {price}")
+            
+            if not new_skins:
+                print(f"   ℹ️  Niciun skin nou găsit pe pagina de profil")
+            else:
+                print(f"   ✅ Total {len(new_skins)} skin-uri noi extrase")
+            
+            return new_skins
+            
+        except Exception as e:
+            print(f"   ❌ Eroare la extragere din profil: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     async def open_free_case_on_page(self, page, account_name, case_type):
         """Deschide case direct de pe pagina /free-cases fără să navigheze"""
@@ -1124,95 +1236,45 @@ class CasehugBotNodriver:
                 await button.click()
                 print(f"   ✓ Click pe butonul OPEN")
                 
-                # Așteaptă animația de deschidere (mai mult timp pentru a vedea rezultatul)
-                print(f"   ⏳ Aștept animație și rezultat (15s)...")
+                # Așteaptă animația de deschidere
+                print(f"   ⏳ Aștept animație (15s)...")
                 await asyncio.sleep(15)
                 
-                # Salvează HTML pentru debugging ÎNAINTE de a verifica erori
+                # Verificăm doar dacă a apărut o eroare (playtime insuficient)
                 content = await page.get_content()
-                debug_dir = "debug_output"
-                import os
-                os.makedirs(debug_dir, exist_ok=True)
                 
-                debug_html_path = os.path.join(debug_dir, f"debug_{account_name}_case_{case_type}_result.html")
-                with open(debug_html_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                print(f"   📄 Debug result salvat: {debug_html_path}")
-                
-                # Verifică erori (playtime insuficient) - DOAR în mesaje de eroare
-                # Caută mesaje de eroare specifice (de obicei în div-uri cu clasă notification sau error)
+                # Verifică erori (playtime insuficient)
                 import re
+                content_without_scripts = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+                
                 error_patterns = [
-                    r'<div[^>]*notification[^>]*>.*?Insufficient.*?CS.*?playtime.*?</div>',
-                    r'<div[^>]*error[^>]*>.*?Insufficient.*?CS.*?playtime.*?</div>',
-                    r'<p[^>]*>.*?Insufficient.*?CS.*?playtime.*?</p>'
+                    r'<div[^>]*class="[^"]*notification[^"]*"[^>]*>.*?Insufficient.*?CS.*?playtime.*?</div>',
+                    r'<div[^>]*class="[^"]*error[^"]*"[^>]*>.*?Insufficient.*?CS.*?playtime.*?</div>',
+                    r'<p[^>]*class="[^"]*error[^"]*"[^>]*>.*?Insufficient.*?CS.*?playtime.*?</p>'
                 ]
                 
                 has_error = False
                 for pattern in error_patterns:
-                    if re.search(pattern, content, re.IGNORECASE | re.DOTALL):
+                    if re.search(pattern, content_without_scripts, re.IGNORECASE | re.DOTALL):
                         has_error = True
                         break
                 
                 if has_error:
                     print(f"   ❌ EROARE: Playtime CS:GO/CS2 insuficient!")
-                    return {
-                        "case": case_type,
-                        "skin": "Playtime insuficient",
-                        "price": "N/A"
-                    }
+                    return False
                 
-                # Caută rezultatul (skin și preț)
-                print(f"   🔍 Extrag informații despre skin...")
-                
-                skin_name = "Necunoscut"
-                price = "N/A"
-                
-                # Strategia: Caută după data-testid specifice
-                import re
-                
-                # Extrage weapon name (data-testid="spinner-won-prize-name")
-                weapon_match = re.search(r'data-testid="spinner-won-prize-name"[^>]*>([^<]+)<', content)
-                weapon_name = weapon_match.group(1).strip() if weapon_match else ""
-                
-                # Extrage skin category (data-testid="spinner-won-prize-category")
-                category_match = re.search(r'data-testid="spinner-won-prize-category"[^>]*>([^<]+)<', content)
-                skin_category = category_match.group(1).strip() if category_match else ""
-                
-                # Extrage preț (data-testid="spinner-won-prize-price")
-                price_match = re.search(r'data-testid="spinner-won-prize-price"[^>]*>(\$[\d.]+)<', content)
-                price = price_match.group(1) if price_match else "N/A"
-                
-                # Construiește numele complet al skin-ului
-                if weapon_name and skin_category:
-                    skin_name = f"{weapon_name} | {skin_category}"
-                    print(f"   🎨 Skin găsit: {skin_name}")
-                    print(f"   💰 Preț găsit: {price}")
-                elif weapon_name:
-                    skin_name = weapon_name
-                    print(f"   🎨 Weapon găsit: {skin_name}")
-                    print(f"   💰 Preț găsit: {price}")
-                else:
-                    print(f"   ⚠️  Nu am găsit informații despre skin")
-                    print(f"   📝 Verifică fișierul {debug_html_path} pentru detalii")
-                
-                print(f"   ✅ {case_type}: {skin_name} - {price}")
-                
-                return {
-                    "case": case_type,
-                    "skin": skin_name,
-                    "price": price
-                }
+                print(f"   ✅ Case {case_type.upper()} deschis cu succes")
+                return True
                 
             except Exception as e:
                 print(f"   ❌ Eroare la click: {e}")
-                return None
+                return False
             
         except Exception as e:
             print(f"   ❌ Eroare: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return False
     
     def send_telegram_message(self, message):
         """Trimite mesaj pe Telegram"""
@@ -1253,12 +1315,12 @@ class CasehugBotNodriver:
             if account_data['results']:
                 for result in account_data['results']:
                     case_name = result['case'].upper()
-                    # Skin poate fi "XM1014 | Mockingbird" sau "Playtime insuficient"
-                    skin = result['skin'].replace(' | ', '|')  # Elimină spațiile din jurul pipe
+                    skin = result['skin']
                     price = result['price']
-                    message += f"{case_name}: ({skin}|{price})\n"
+                    rarity = result.get('rarity', '⚪')  # Default la alb dacă nu există
+                    message += f"{rarity} {case_name}: {skin} - {price}\n"
             else:
-                message += "Niciun case deschis\n"
+                message += "❌ Niciun skin nou\n"
             
             message += f"\n"
         

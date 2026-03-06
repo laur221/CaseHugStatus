@@ -42,6 +42,7 @@ function Install-Task {
             -DontStopIfGoingOnBatteries `
             -StartWhenAvailable `
             -DontStopOnIdleEnd `
+            -MultipleInstances IgnoreNew `
             -ExecutionTimeLimit (New-TimeSpan -Hours 0)
         
         # Principal - foloseste utilizatorul curent cu privilegii maxime

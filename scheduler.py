@@ -11,18 +11,75 @@ import time
 import asyncio
 import psutil
 import subprocess
+import sys
+import atexit
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # Configurație
 LAST_OPENING_FILE = "last_opening.json"
 SCHEDULE_CONFIG_FILE = "schedule_config.json"
+LOCK_FILE = "scheduler.lock"
 
 class CasehugScheduler:
     def __init__(self):
         """Inițializează scheduler-ul"""
         self.config = self.load_schedule_config()
         self.last_opening = self.load_last_opening()
+        self.lock_file_path = os.path.abspath(LOCK_FILE)
+        
+        # Înregistrează cleanup la exit
+        atexit.register(self.cleanup_lock)
+    
+    def is_already_running(self):
+        """Verifică dacă există o altă instanță a scheduler-ului care rulează"""
+        if not os.path.exists(self.lock_file_path):
+            return False
+        
+        try:
+            with open(self.lock_file_path, 'r') as f:
+                pid = int(f.read().strip())
+            
+            # Verifică dacă procesul cu acest PID încă rulează
+            if psutil.pid_exists(pid):
+                try:
+                    proc = psutil.Process(pid)
+                    # Verifică dacă e scheduler.py
+                    cmdline = ' '.join(proc.cmdline())
+                    if 'scheduler.py' in cmdline:
+                        print(f"⚠️  Scheduler deja rulează (PID: {pid})")
+                        return True
+                except:
+                    pass
+            
+            # PID-ul nu mai există sau nu e scheduler - șterge lock vechi
+            os.remove(self.lock_file_path)
+            return False
+            
+        except Exception as e:
+            print(f"⚠️  Eroare verificare lock: {e}")
+            return False
+    
+    def create_lock(self):
+        """Creează fișier lock cu PID-ul curent"""
+        try:
+            pid = os.getpid()
+            with open(self.lock_file_path, 'w') as f:
+                f.write(str(pid))
+            print(f"🔒 Lock creat (PID: {pid})")
+            return True
+        except Exception as e:
+            print(f"❌ Eroare creare lock: {e}")
+            return False
+    
+    def cleanup_lock(self):
+        """Șterge fișierul lock la ieșire"""
+        try:
+            if os.path.exists(self.lock_file_path):
+                os.remove(self.lock_file_path)
+                print(f"🔓 Lock șters")
+        except Exception as e:
+            print(f"⚠️  Eroare ștergere lock: {e}")
     
     def load_schedule_config(self):
         """Încarcă configurația scheduler-ului"""
@@ -373,16 +430,34 @@ class CasehugScheduler:
     
     def run(self):
         """Pornește scheduler-ul"""
+        # Verifică dacă deja rulează o altă instanță
+        if self.is_already_running():
+            print("❌ O altă instanță a scheduler-ului deja rulează!")
+            print("   Nu pornesc o nouă instanță (previne procese multiple)")
+            return False
+        
+        # Creează lock file
+        if not self.create_lock():
+            print("❌ Nu am putut crea lock file!")
+            return False
+        
         try:
             asyncio.run(self.run_scheduler_loop())
+            return True
         except KeyboardInterrupt:
             print("\n\n⛔ Scheduler oprit de utilizator")
+            return False
         except Exception as e:
             print(f"\n❌ Eroare critică scheduler: {e}")
             import traceback
             traceback.print_exc()
+            return False
+        finally:
+            # Cleanup lock la final
+            self.cleanup_lock()
 
 
 if __name__ == "__main__":
     scheduler = CasehugScheduler()
-    scheduler.run()
+    exit_code = 0 if scheduler.run() else 1
+    sys.exit(exit_code)
