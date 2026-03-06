@@ -12,9 +12,9 @@
 - 🤖 **Automated Scheduler** - Checks every 5 minutes, runs when ready
 - 👻 **Invisible Operation** - Runs silently in background with minimized Chrome
 - 🔄 **Auto Steam Login** - Handles Steam OAuth automatically
-- � **Smart Case Detection** - Auto-detects all available cases (Discord, Steam, + 13 level-based cases)
+- 🛄 **Smart Case Detection** - Auto-detects all available cases (Discord, Steam, + 13 level-based cases)
 - 🎚️ **Level-Based Progression** - Automatically handles wood → iron → bronze → diamond → immortal
-- �📊 **Skin Rarity Detection** - Extracts skins with rarity colors (⚪🔵🟣🩷🔴🟡)
+- 📊 **Skin Rarity Detection** - Extracts skins with rarity colors (⚪🔵🟣🩷🔴🟡)
 - 📱 **Telegram Notifications** - Get notified when cases are opened
 - 🛡️ **Cloudflare Bypass** - Automatic Cloudflare challenge solving
 - 🌐 **Internet Check** - Only runs when internet is available

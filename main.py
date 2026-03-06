@@ -15,7 +15,7 @@ LAST_OPENING_FILE = "last_opening.json"
 
 class CasehugBotNodriver:
     def __init__(self, config_file=CONFIG_FILE):
-        """Inițializează botul cu configurația din fișier"""
+        """Initialize bot with configuration from file"""
         with open(config_file, 'r', encoding='utf-8') as f:
             self.config = json.load(f)
         
@@ -31,24 +31,24 @@ class CasehugBotNodriver:
         # Sesiuni FlareSolverr pentru fiecare cont (păstrează cookies în Docker)
         self.flare_sessions = {}  # {account_name: session_id}
         
-        # Detectare Docker
+        # Docker detection
         is_docker = os.environ.get('DISPLAY') == ':99' or os.environ.get('CHROME_BIN') is not None
         
-        # În Docker: FlareSolverr PRIMARY (headless Nodriver nu trece Cloudflare)
-        # Pe Windows: Nodriver PRIMARY (11.22s, mai rapid)
+        # In Docker: FlareSolverr PRIMARY (headless Nodriver doesn't bypass Cloudflare)
+        # On Windows: Nodriver PRIMARY (11.22s, faster)
         if is_docker:
-            print(f"   🐳 Docker detectat - folosesc FlareSolverr ca PRIMARY bypass")
+            print(f"   🐳 Docker detected - using FlareSolverr as PRIMARY bypass")
             self.use_flaresolverr = True
-            self.flaresolverr_primary = True  # Folosește FlareSolverr întâi, nu ca fallback
+            self.flaresolverr_primary = True  # Use FlareSolverr first, not as fallback
             print(f"   🛡️  FlareSolverr URL: {self.flaresolverr_url}")
         else:
-            print(f"   💻 Windows detectat - folosesc Nodriver PRIMARY (11.22s avg)")
+            print(f"   💻 Windows detected - using Nodriver PRIMARY (11.22s avg)")
             self.flaresolverr_primary = False
-            # Verifică dacă FlareSolverr disponibil ca fallback
+            # Check if FlareSolverr available as fallback
             try:
                 flaresolverr_check = requests.get(self.flaresolverr_url.replace('/v1', ''), timeout=3)
                 if flaresolverr_check.status_code == 200:
-                    print(f"   🛡️  FlareSolverr disponibil ca fallback (16.57s)")
+                    print(f"   🛡️  FlareSolverr available as fallback (16.57s)")
                     self.use_flaresolverr = True
                 else:
                     self.use_flaresolverr = False
@@ -56,14 +56,14 @@ class CasehugBotNodriver:
                 self.use_flaresolverr = False
     
     async def setup_browser(self):
-        """Nodriver nu necesită setup explicit - fiecare cont își va crea browser-ul"""
-        print("   🚀 Nodriver gata - fiecare cont va lansa browser automat")
+        """Nodriver doesn't require explicit setup - each account will create its own browser"""
+        print("   🚀 Nodriver ready - each account will launch browser automatically")
         return True
     
     def load_last_opening(self):
-        """Încarcă tracking-ul ultimelor deschideri"""
+        """Load tracking of last openings"""
         if not os.path.exists(LAST_OPENING_FILE):
-            # Creează fișier nou cu toate conturile
+            # Create new file with all accounts
             default_data = {}
             for account in self.accounts:
                 account_name = account.get('name', '')
@@ -85,7 +85,7 @@ class CasehugBotNodriver:
             return {}
     
     def save_account_timestamp(self, account_name, had_success=True):
-        """Salvează timestamp pentru un cont după procesare"""
+        """Save timestamp for an account after processing"""
         last_opening = self.load_last_opening()
         
         if account_name not in last_opening:
@@ -93,11 +93,11 @@ class CasehugBotNodriver:
         
         timestamp = datetime.now().isoformat()
         
-        # Dacă a deschis case cu succes, salvează ca last_opening
-        # Altfel, doar actualizează last_check (pentru tracking)
+        # If cases were opened successfully, save as last_opening
+        # Otherwise, only update last_check (for tracking)
         if had_success:
             last_opening[account_name]['last_opening'] = timestamp
-            print(f"   ✅ Timestamp salvat pentru {account_name}: {timestamp}")
+            print(f"   ✅ Timestamp saved for {account_name}: {timestamp}")
         
         last_opening[account_name]['last_check'] = timestamp
         
@@ -105,7 +105,7 @@ class CasehugBotNodriver:
             json.dump(last_opening, f, indent=2, ensure_ascii=False)
     
     async def create_flaresolverr_session(self, account_name):
-        """Creează sesiune FlareSolverr pentru un cont (păstrează cookies între requests)"""
+        """Create FlareSolverr session for an account (keeps cookies between requests)"""
         try:
             session_id = f"session_{account_name.replace(' ', '_')}"
             
@@ -120,17 +120,17 @@ class CasehugBotNodriver:
                 result = response.json()
                 if result.get('status') == 'ok':
                     self.flare_sessions[account_name] = session_id
-                    print(f"   ✅ Sesiune FlareSolverr creată: {session_id}")
+                    print(f"   ✅ FlareSolverr session created: {session_id}")
                     return session_id
             
-            print(f"   ⚠️  Nu am putut crea sesiune FlareSolverr pentru {account_name}")
+            print(f"   ⚠️  Could not create FlareSolverr session for {account_name}")
             return None
         except Exception as e:
-            print(f"   ⚠️  Eroare creare sesiune FlareSolverr: {e}")
+            print(f"   ⚠️  Error creating FlareSolverr session: {e}")
             return None
     
     async def destroy_flaresolverr_session(self, account_name):
-        """Șterge sesiune FlareSolverr după procesare cont"""
+        """Delete FlareSolverr session after processing account"""
         if account_name not in self.flare_sessions:
             return
         
@@ -143,28 +143,28 @@ class CasehugBotNodriver:
             
             requests.post(self.flaresolverr_url, json=payload, timeout=5)
             del self.flare_sessions[account_name]
-            print(f"   🗑️  Sesiune FlareSolverr închisă: {session_id}")
+            print(f"   🗑️  FlareSolverr session closed: {session_id}")
         except:
             pass
     
     async def create_page_with_stealth(self, account_name):
-        """Creează browser Nodriver cu profil persistent - bypass Cloudflare automat"""
-        # Creează folder persistent pentru acest cont
+        """Create Nodriver browser with persistent profile - bypass Cloudflare automatically"""
+        # Create persistent folder for this account
         profile_dir = f'profiles/{account_name.replace(" ", "_")}'
         os.makedirs(profile_dir, exist_ok=True)
         
-        print(f"   📁 Profil persistent: {profile_dir}")
-        print(f"   🚀 Lansez Nodriver (bypass Cloudflare automat)...")
+        print(f"   📁 Persistent profile: {profile_dir}")
+        print(f"   🚀 Launching Nodriver (bypass Cloudflare automatically)...")
         
-        # Detectează dacă rulează în Docker
+        # Detect if running in Docker
         is_docker = os.environ.get('DISPLAY') == ':99' or os.environ.get('CHROME_BIN') is not None
-        headless_mode = is_docker  # Headless în Docker, vizibil pe Windows
+        headless_mode = is_docker  # Headless in Docker, visible on Windows
         
         if is_docker:
-            print(f"   🐳 Docker detectat - rulare headless mode")
+            print(f"   🐳 Docker detected - running in headless mode")
         
-        # Lansează browser Nodriver cu profil persistent
-        # Nodriver rezolvă Cloudflare automat prin DevTools Protocol
+        # Launch Nodriver browser with persistent profile
+        # Nodriver solves Cloudflare automatically through DevTools Protocol
         browser = await uc.start(
             user_data_dir=os.path.abspath(profile_dir),
             headless=headless_mode,
@@ -173,16 +173,16 @@ class CasehugBotNodriver:
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-infobars',
-                '--mute-audio',  # Dezactivează sunetul
+                '--mute-audio',  # Disable sound
             ]
         )
         
-        # Prima tab deschisă automat
+        # First tab opened automatically
         page = browser.main_tab
         
-        # Minimizează fereastra Chrome (doar pe Windows, nu în Docker)
+        # Minimize Chrome window (only on Windows, not in Docker)
         if not is_docker:
-            await asyncio.sleep(1)  # Așteaptă ca fereastra să apară
+            await asyncio.sleep(1)  # Wait for window to appear
             try:
                 user32 = ctypes.windll.user32
                 
@@ -215,74 +215,74 @@ class CasehugBotNodriver:
         return page, browser
     
     async def solve_cloudflare_with_flaresolverr(self, url: str, account_name=None):
-        """Rezolvă Cloudflare folosind FlareSolverr (GRATUIT, 99% success rate)"""
+        """Solve Cloudflare using FlareSolverr (FREE, 99% success rate)"""
         try:
-            print(f"   🛡️  Trimit request la FlareSolverr...")
+            print(f"   🛡️  Sending request to FlareSolverr...")
             print(f"      URL: {url}")
             
-            # Trimite request la FlareSolverr
+            # Send request to FlareSolverr
             payload = {
                 "cmd": "request.get",
                 "url": url,
-                "maxTimeout": 60000  # 60 secunde timeout
+                "maxTimeout": 60000  # 60 seconds timeout
             }
             
-            # Folosește sesiune dacă există (păstrează cookies)
+            # Use session if exists (keeps cookies)
             if account_name and account_name in self.flare_sessions:
                 payload["session"] = self.flare_sessions[account_name]
-                print(f"      📎 Folosesc sesiune: {self.flare_sessions[account_name]}")
+                print(f"      📎 Using session: {self.flare_sessions[account_name]}")
             
             response = requests.post(
                 self.flaresolverr_url,
                 json=payload,
-                timeout=65  # Puțin mai mult decât maxTimeout
+                timeout=65  # Slightly more than maxTimeout
             )
             
             if response.status_code != 200:
-                print(f"   ❌ FlareSolverr eroare HTTP {response.status_code}")
+                print(f"   ❌ FlareSolverr HTTP error {response.status_code}")
                 return None
             
             result = response.json()
             
             if result.get('status') != 'ok':
-                print(f"   ❌ FlareSolverr eroare: {result.get('message', 'Unknown error')}")
+                print(f"   ❌ FlareSolverr error: {result.get('message', 'Unknown error')}")
                 return None
             
             solution = result.get('solution', {})
             cookies = solution.get('cookies', [])
             user_agent = solution.get('userAgent', '')
-            response_body = solution.get('response', '')  # HTML-ul paginii
+            response_body = solution.get('response', '')  # HTML of the page
             
             if not cookies:
-                print(f"   ⚠️  FlareSolverr nu a returnat cookies")
+                print(f"   ⚠️  FlareSolverr did not return cookies")
                 return None
             
-            print(f"   ✅ FlareSolverr SUCCESS! Primite {len(cookies)} cookies")
+            print(f"   ✅ FlareSolverr SUCCESS! Received {len(cookies)} cookies")
             print(f"   🍪 Cookies: {', '.join([c['name'] for c in cookies[:5]])}...")
             
             return {
                 'cookies': cookies,
                 'user_agent': user_agent,
-                'html': response_body  # HTML-ul paginii fără Cloudflare
+                'html': response_body  # HTML of page without Cloudflare
             }
             
         except requests.exceptions.Timeout:
-            print(f"   ❌ FlareSolverr timeout (>60s) - site-ul e prea lent sau FlareSolverr blocat")
+            print(f"   ❌ FlareSolverr timeout (>60s) - site is too slow or FlareSolverr is blocked")
             return None
         except Exception as e:
-            print(f"   ❌ Eroare FlareSolverr: {e}")
+            print(f"   ❌ FlareSolverr error: {e}")
             import traceback
             traceback.print_exc()
             return None
     
     async def solve_turnstile_with_2captcha(self, page, sitekey: str, url: str):
-        """Rezolvă Cloudflare Turnstile folosind 2Captcha API (FALLBACK)"""
+        """Solve Cloudflare Turnstile using 2Captcha API (FALLBACK)"""
         try:
-            print(f"   🔐 Trimit challenge la 2Captcha (FALLBACK)...")
+            print(f"   🔐 Sending challenge to 2Captcha (FALLBACK)...")
             print(f"      Sitekey: {sitekey[:20]}...")
             print(f"      URL: {url}")
             
-            # Trimite challenge la 2Captcha
+            # Send challenge to 2Captcha
             result = self.captcha_solver.turnstile(
                 sitekey=sitekey,
                 url=url
@@ -290,14 +290,14 @@ class CasehugBotNodriver:
             
             token = result.get('code')
             if not token:
-                print(f"   ❌ 2Captcha nu a returnat token")
+                print(f"   ❌ 2Captcha did not return token")
                 return None
             
-            print(f"   ✅ Token primit de la 2Captcha: {token[:50]}...")
+            print(f"   ✅ Token received from 2Captcha: {token[:50]}...")
             return token
             
         except Exception as e:
-            print(f"   ❌ Eroare 2Captcha: {e}")
+            print(f"   ❌ 2Captcha error: {e}")
             import traceback
             traceback.print_exc()
             return None
