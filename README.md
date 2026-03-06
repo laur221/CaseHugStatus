@@ -12,7 +12,9 @@
 - 🤖 **Automated Scheduler** - Checks every 5 minutes, runs when ready
 - 👻 **Invisible Operation** - Runs silently in background with minimized Chrome
 - 🔄 **Auto Steam Login** - Handles Steam OAuth automatically
-- 📊 **Skin Rarity Detection** - Extracts skins with rarity colors (⚪🔵🟣🩷🔴🟡)
+- � **Smart Case Detection** - Auto-detects all available cases (Discord, Steam, + 13 level-based cases)
+- 🎚️ **Level-Based Progression** - Automatically handles wood → iron → bronze → diamond → immortal
+- �📊 **Skin Rarity Detection** - Extracts skins with rarity colors (⚪🔵🟣🩷🔴🟡)
 - 📱 **Telegram Notifications** - Get notified when cases are opened
 - 🛡️ **Cloudflare Bypass** - Automatic Cloudflare challenge solving
 - 🌐 **Internet Check** - Only runs when internet is available
@@ -156,12 +158,34 @@ Every 5 minutes:
 1. Launch Chrome (minimized, muted)
 2. Navigate to casehug.com/free-cases
 3. Auto-login with Steam if needed
-4. Check available cases (DISCORD, STEAM, WOOD)
-5. Open each available case
+4. Auto-detect available cases:
+   ├─ Always check: DISCORD, STEAM
+   └─ Level-based (in order): WOOD → IRON → BRONZE → SILVER → GOLD
+       → PLATINUM → EMERALD → DIAMOND → MASTER → CHALLENGER
+       → LEGEND → MYTHIC → IMMORTAL
+5. Open each available case (stops at first level-locked case)
 6. Navigate to casehug.com/user-account
 7. Extract NEW skins with rarity
 8. Send Telegram report
 9. Close browser
+```
+
+**Smart Detection Logic:**
+- **Discord & Steam**: Always checked (not level-dependent)
+- **Level cases**: Checked in progression order
+  - If case is **🔒 locked** (level too low) → **STOP** (all higher cases are locked too)
+  - If case is **⏰ on cooldown** → **CONTINUE** (higher cases might be available)
+  - If case is **✅ available** → **OPEN** and continue
+
+**Example**: Account at level 30
+```
+✅ DISCORD - Available
+✅ STEAM - Available  
+✅ WOOD (Level 0) - Available
+✅ IRON (Level 12) - Available
+✅ BRONZE (Level 24) - Available
+🔒 SILVER (Level 32) - LOCKED → STOP
+   (No need to check Gold/Platinum/etc.)
 ```
 
 ## 📊 Telegram Report Format
@@ -171,16 +195,25 @@ Every 5 minutes:
 📅 06.03.2026 18:45:23
 ──────────────────────────────
 
-Account 1
+Account 1 (Level 45)
 ⚪ DISCORD: G3SG1 | Jungle Dashed - $0.01
 🔵 WOOD: MP7 | Groundwater - $0.05
 🟣 STEAM: M4A4 | Neo-Noir - $8.50
+🩷 BRONZE: AK-47 | Redline - $12.00
+🔴 GOLD: AWP | Asiimov - $45.50
 
-Account 2
-❌ No new skins
+Account 2 (Level 5)
+⚪ DISCORD: P250 | Sand Dune - $0.01
+🔵 WOOD: Nova | Candy Apple - $0.03
+❌ STEAM: Not available
 
 ──────────────────────────────
 ```
+
+**Case Types:**
+- **Discord** - Always available (Level 0)
+- **Steam** - Requires Steam login (Level 0)
+- **Wood** → **Iron** → **Bronze** → **Silver** → **Gold** → **Platinum** → **Emerald** → **Diamond** → **Master** → **Challenger** → **Legend** → **Mythic** → **Immortal** (Level 0-120)
 
 **Rarity Colors:**
 - ⚪ Consumer/Industrial (White/Gray)

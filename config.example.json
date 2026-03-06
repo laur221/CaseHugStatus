@@ -4,23 +4,19 @@
   "accounts": [
     {
       "name": "Account 1",
-      "profile_dir": "profile_1",
-      "available_cases": ["discord", "steam", "wood"]
+      "profile_dir": "profile_1"
     },
     {
       "name": "Account 2",
-      "profile_dir": "profile_2",
-      "available_cases": ["discord", "steam", "wood"]
+      "profile_dir": "profile_2"
     },
     {
-      "name": "Account 3 (without Steam case)",
-      "profile_dir": "profile_3",
-      "available_cases": ["discord", "wood"]
+      "name": "Account 3",
+      "profile_dir": "profile_3"
     },
     {
-      "name": "Account 4 (without Steam case)",
-      "profile_dir": "profile_4",
-      "available_cases": ["discord", "wood"]
+      "name": "Account 4",
+      "profile_dir": "profile_4"
     }
   ]
 }

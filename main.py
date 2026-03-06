@@ -582,16 +582,53 @@ class CasehugBotNodriver:
             
             available_cases = []
             
+            # Definește case-urile în ordinea nivelului (pentru verificare inteligentă)
+            # Format: (case_name, required_level)
+            level_cases_order = [
+                ("wood", 0),
+                ("iron", 12),
+                ("bronze", 24),
+                ("silver", 32),
+                ("gold", 41),
+                ("platinum", 54),
+                ("emerald", 64),
+                ("diamond", 72),
+                ("master", 87),
+                ("challenger", 100),
+                ("legend", 111),
+                ("mythic", 119),
+                ("immortal", 120)
+            ]
+            
             # Verifică fiecare case specific după link-ul său
             case_urls = {
                 "discord": 'href="/free-cases/discord"',
                 "steam": 'href="/free-cases/steam"',
-                "wood": 'href="/free-cases/wood"'
+                "wood": 'href="/free-cases/wood"',
+                "iron": 'href="/free-cases/iron"',
+                "bronze": 'href="/free-cases/bronze"',
+                "silver": 'href="/free-cases/silver"',
+                "gold": 'href="/free-cases/gold"',
+                "platinum": 'href="/free-cases/platinum"',
+                "emerald": 'href="/free-cases/emerald"',
+                "diamond": 'href="/free-cases/diamond"',
+                "master": 'href="/free-cases/master"',
+                "challenger": 'href="/free-cases/challenger"',
+                "legend": 'href="/free-cases/legend"',
+                "mythic": 'href="/free-cases/mythic"',
+                "immortal": 'href="/free-cases/immortal"'
             }
             
             # Verifică fiecare case
-            for case_type, case_url_marker in case_urls.items():
-                # Găsește secțiunea case-ului după URL-ul său
+            # 1. Discord și Steam se verifică întotdeauna (nu depind de nivel)
+            # 2. Level cases se verifică în ordine, cu STOP la primul locked din cauza nivelului
+            
+            # Verifică Discord și Steam (mereu disponibile, nu depind de nivel)
+            for case_type in ["discord", "steam"]:
+                if case_type not in case_urls:
+                    continue
+                    
+                case_url_marker = case_urls[case_type]
                 case_pos = content.find(case_url_marker)
                 
                 if case_pos == -1:
@@ -602,15 +639,8 @@ class CasehugBotNodriver:
                 section_start = max(0, case_pos - 500)
                 section_end = min(len(content), case_pos + 2000)
                 case_section = content[section_start:section_end]
-                case_section_lower = case_section.lower()
                 
-                # Extrage secțiunea (500 înainte, 2000 după pentru context complet)
-                section_start = max(0, case_pos - 500)
-                section_end = min(len(content), case_pos + 2000)
-                case_section = content[section_start:section_end]
-                case_section_lower = case_section.lower()
-                
-                # 1. Verifică dacă are TIMER BADGE (cooldown activ) - cel mai clar indicator
+                # Verifică dacă e pe cooldown
                 has_timer = False
                 if 'data-testid="badge"' in case_section and 'ri-timer-line' in case_section:
                     import re
@@ -623,30 +653,22 @@ class CasehugBotNodriver:
                 if has_timer:
                     continue  # Skip acest case
                 
-                # 2. Verifică dacă are LOCK ICON (task-uri incomplete sau locked)
+                # Verifică dacă e blocat din cauza task-urilor
                 has_lock_icon = 'si-ch-lock' in case_section
-                
-                # 3. Verifică dacă butonul este DISABLED cu text "CASE LOCKED"
                 has_disabled_button = ('disabled=""' in case_section or '<button disabled' in case_section)
                 is_case_locked = 'CASE LOCKED' in case_section or 'Case Locked' in case_section
                 
                 if has_lock_icon or (has_disabled_button and is_case_locked):
-                    print(f"   🔒 {case_type.upper()} - blocat (tasks incomplete sau requires login)")
+                    print(f"   🔒 {case_type.upper()} - blocat (task incomplete)")
                     continue
                 
-                # 4. Verifică dacă butonul este DISABLED în general (fără să fie cooldown timer)
                 if has_disabled_button and not has_timer:
-                    print(f"   ⚠️  {case_type.upper()} - buton disabled (posibil task incomplete)")
+                    print(f"   ⚠️  {case_type.upper()} - buton disabled")
                     continue
                 
-                # 5. Verifică dacă există buton ACTIV cu text "Open" (fără disabled)
+                # Verifică dacă are buton Open activ
                 has_open_button = False
-                
-                # Caută textul "Open" în diverse formate
-                # Format 1: >Open</button> sau >Open</
-                # Format 2: <span>Open</span> (pentru case-uri cu nivel)
                 if '>Open<' in case_section:
-                    # Găsește toate pozițiile unde apare ">Open<"
                     open_positions = []
                     search_pos = 0
                     while True:
@@ -656,30 +678,104 @@ class CasehugBotNodriver:
                         open_positions.append(pos)
                         search_pos = pos + 1
                     
-                    # Pentru fiecare poziție, verifică dacă e în context de buton valid
                     for open_pos in open_positions:
-                        # Extrage 400 caractere înainte pentru a vedea tagul <button>
-                        # (WOOD case necesită 309+ caractere, 300 era prea puțin)
                         button_context = case_section[max(0, open_pos - 400):open_pos]
-                        
-                        # Verifică dacă există <button> și NU există disabled
                         if '<button' in button_context:
-                            # Extrage doar ultimul <button> tag (cel mai apropiat)
                             last_button_start = button_context.rfind('<button')
                             button_tag = button_context[last_button_start:]
-                            
-                            # Verifică dacă acest button NU are disabled
                             if 'disabled' not in button_tag:
                                 has_open_button = True
                                 break
                 
-                # 6. Dacă are buton activ "Open" → disponibil
                 if has_open_button:
                     available_cases.append(case_type)
-                    print(f"   ✅ {case_type.upper()} - disponibil (buton Open activ)")
+                    print(f"   ✅ {case_type.upper()} - disponibil")
                 else:
-                    # Nu e nici pe cooldown, nici locked, dar nici buton Open → status neclar
-                    print(f"   ⏳ {case_type.upper()} - status neclar (nu văd buton Open activ)")
+                    print(f"   ⏳ {case_type.upper()} - status neclar")
+            
+            # Verifică level cases în ordine (wood → iron → bronze → etc.)
+            # STOP la primul case care nu apare în pagină (locked din cauza nivelului)
+            print(f"\\n   📊 Verificare case-uri bazate pe nivel...")
+            for case_type, required_level in level_cases_order:
+                if case_type not in case_urls:
+                    continue
+                    
+                case_url_marker = case_urls[case_type]
+                
+                # Verifică dacă case-ul apare în pagină
+                case_pos = content.find(case_url_marker)
+                
+                if case_pos == -1:
+                    # Case-ul NU apare în pagină → LOCKED din cauza nivelului
+                    # Toate case-urile următoare sunt și ele locked
+                    print(f"   🔒 {case_type.upper()} (nivel {required_level}) - locked din cauza nivelului")
+                    print(f"   🛑 STOP: Toate case-urile următoare sunt locked")
+                    break  # STOP - nu mai verifica case-urile următoare
+                
+                # Case-ul apare în pagină → verifică statusul
+                # IMPORTANT: Extrage secțiunea DOAR DUPĂ URL-ul case-ului 
+                # (nu înainte, ca să nu prindem date de la case-ul anterior)
+                section_start = case_pos  # Start exact de la URL
+                section_end = min(len(content), case_pos + 2000)  # 2000 după URL
+                case_section = content[section_start:section_end]
+                
+                # 1. Verifică indicatori de status
+                has_lock_icon = 'si-ch-lock' in case_section
+                has_disabled_button = ('disabled=""' in case_section or '<button disabled' in case_section)
+                has_timer = False
+                if 'data-testid="badge"' in case_section and 'ri-timer-line' in case_section:
+                    import re
+                    time_pattern = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', case_section)
+                    if time_pattern:
+                        has_timer = True
+                        time_str = time_pattern.group(0)
+                
+                # 2. LOGICĂ DE DECIZIE pentru case-uri bazate pe nivel:
+                # - LOCK (cu sau fără timer) → NIVEL INSUFICIENT → BREAK
+                # - Doar TIMER (fără lock) → PE COOLDOWN → CONTINUE
+                
+                # Dacă are LOCK (indiferent de timer) → NIVEL INSUFICIENT
+                if has_lock_icon:
+                    print(f"   🔒 {case_type.upper()} (nivel {required_level}) - nivel insuficient")
+                    print(f"   🛑 STOP: Toate case-urile următoare necesită nivel mai mare")
+                    break  # STOP verificarea
+                
+                # Dacă are doar TIMER (fără lock) → PE COOLDOWN
+                if has_timer and not has_lock_icon:
+                    print(f"   ⏰ {case_type.upper()} (nivel {required_level}) - pe cooldown ({time_str})")
+                    continue  # Continuă verificarea - următoarele pot fi disponibile
+                
+                # Dacă are buton disabled dar fără lock și fără timer → neclar
+                if has_disabled_button and not has_lock_icon and not has_timer:
+                    print(f"   ⚠️  {case_type.upper()} (nivel {required_level}) - buton disabled (neclar)")
+                    continue
+                
+                # 3. Verifică dacă are buton OPEN activ
+                has_open_button = False
+                if '>Open<' in case_section:
+                    open_positions = []
+                    search_pos = 0
+                    while True:
+                        pos = case_section.find('>Open<', search_pos)
+                        if pos == -1:
+                            break
+                        open_positions.append(pos)
+                        search_pos = pos + 1
+                    
+                    for open_pos in open_positions:
+                        button_context = case_section[max(0, open_pos - 400):open_pos]
+                        if '<button' in button_context:
+                            last_button_start = button_context.rfind('<button')
+                            button_tag = button_context[last_button_start:]
+                            if 'disabled' not in button_tag:
+                                has_open_button = True
+                                break
+                
+                if has_open_button:
+                    available_cases.append(case_type)
+                    print(f"   ✅ {case_type.upper()} (nivel {required_level}) - disponibil")
+                else:
+                    print(f"   ⏳ {case_type.upper()} (nivel {required_level}) - status neclar")
             
             if not available_cases:
                 print(f"   ⚠️  Niciun case disponibil pentru {account_name}")
@@ -698,7 +794,19 @@ class CasehugBotNodriver:
         case_urls = {
             "discord": "https://casehug.com/free-cases/discord",
             "steam": "https://casehug.com/free-cases/steam",
-            "wood": "https://casehug.com/free-cases/wood"
+            "wood": "https://casehug.com/free-cases/wood",
+            "iron": "https://casehug.com/free-cases/iron",
+            "bronze": "https://casehug.com/free-cases/bronze",
+            "silver": "https://casehug.com/free-cases/silver",
+            "gold": "https://casehug.com/free-cases/gold",
+            "platinum": "https://casehug.com/free-cases/platinum",
+            "emerald": "https://casehug.com/free-cases/emerald",
+            "diamond": "https://casehug.com/free-cases/diamond",
+            "master": "https://casehug.com/free-cases/master",
+            "challenger": "https://casehug.com/free-cases/challenger",
+            "legend": "https://casehug.com/free-cases/legend",
+            "mythic": "https://casehug.com/free-cases/mythic",
+            "immortal": "https://casehug.com/free-cases/immortal"
         }
         
         if case_type.lower() not in case_urls:
@@ -1303,7 +1411,7 @@ class CasehugBotNodriver:
             # Procesează TOATE conturile
             all_results = []
             for account in self.accounts:
-                print(f"\n🧪 Test cu: {account['name']}\n")
+                print(f"\n🧪 Procesez: {account['name']}\n")
                 result = await self.process_account(account)
                 all_results.append(result)
                 
