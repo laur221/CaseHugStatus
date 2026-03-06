@@ -4,12 +4,12 @@ import time
 import asyncio
 from datetime import datetime
 import nodriver as uc
-from nodriver import cdp  # Chrome DevTools Protocol pentru cookies
+from nodriver import cdp  # Chrome DevTools Protocol for cookies
 import requests
 # from twocaptcha import TwoCaptcha  # Commented - not used
-import ctypes  # Pentru Windows API - minimizare ferestre
+import ctypes  # For Windows API - window minimization
 
-# Configurație
+# Configuration
 CONFIG_FILE = "config.json"
 LAST_OPENING_FILE = "last_opening.json"
 
@@ -24,11 +24,11 @@ class CasehugBotNodriver:
         self.accounts = self.config.get('accounts', [])
         self.captcha_api_key = self.config.get('2captcha_api_key', '')
         
-        # FlareSolverr URL: Environment variable are prioritate (pentru Docker)
+        # FlareSolverr URL: Environment variable has priority (for Docker)
         self.flaresolverr_url = os.environ.get('FLARESOLVERR_URL', 
                                                self.config.get('flaresolverr_url', 'http://localhost:8191/v1'))
         
-        # Sesiuni FlareSolverr pentru fiecare cont (păstrează cookies în Docker)
+        # FlareSolverr sessions for each account (keeps cookies in Docker)
         self.flare_sessions = {}  # {account_name: session_id}
         
         # Docker detection
@@ -323,14 +323,14 @@ class CasehugBotNodriver:
                     print("   ✅ Cloudflare trecut cu FlareSolverr cookies!")
                     return True
             
-            # Pe Windows: Nodriver rezolvă automat - așteaptă mai mult
+            # On Windows: Nodriver solves automatically - wait longer
             first_wait = 15 if is_docker else 10
             second_wait = 15 if is_docker else 10
             
-            print(f"   🛡️  Aștept rezolvare automată Cloudflare (Nodriver - {first_wait}s)...")
+            print(f"   🛡️  Waiting for automatic Cloudflare resolution (Nodriver - {first_wait}s)...")
             await asyncio.sleep(first_wait)
             
-            # Verifică dacă Cloudflare încă există
+            # Check if Cloudflare still exists
             content = await page.get_content()
             content_lower = content.lower()
             
@@ -340,24 +340,24 @@ class CasehugBotNodriver:
             ])
             
             if has_cloudflare:
-                print(f"   ⚠️  Cloudflare încă prezent - aștept încă {second_wait}s...")
+                print(f"   ⚠️  Cloudflare still present - waiting {second_wait}s more...")
                 await asyncio.sleep(second_wait)
                 
                 content = await page.get_content()
                 has_cloudflare = 'cloudflare' in content.lower()
                 
                 if has_cloudflare:
-                    print("   ⚠️  Cloudflare NU trecut automat - verificare manuală")
+                    print("   ⚠️  Cloudflare NOT bypassed automatically - manual check")
                     return False
             
-            print("   ✅ Cloudflare trecut cu succes!")
+            print("   ✅ Cloudflare bypassed successfully!")
             return True
             
         except Exception as e:
-            print(f"   ⚠️  Eroare verificare Cloudflare: {e}")
+            print(f"   ⚠️  Error checking Cloudflare: {e}")
             import traceback
             traceback.print_exc()
-            return True  # Continuăm oricum
+            return True  # Continue anyway
     
     async def check_steam_login(self, page, account_name):
         """Verifică dacă utilizatorul este logat cu Steam (verifică balanta în header)"""
