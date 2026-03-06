@@ -1,27 +1,27 @@
-' CasehugBot Scheduler - Rulare INVIZIBILA (fara consola)
-' Acest script VBS ascunde complet consola
+' CasehugBot Scheduler - INVISIBLE RUN (no console)
+' This VBS script completely hides the console
 
 Set objShell = CreateObject("WScript.Shell")
 Set objFSO = CreateObject("Scripting.FileSystemObject")
 
-' Obtine directorul curent al scriptului
+' Get current script directory
 strScriptPath = objFSO.GetParentFolderName(WScript.ScriptFullName)
 
-' Construieste calea catre Python si scheduler.py
+' Build path to Python and scheduler.py
 strPythonPath = strScriptPath & "\.venv\Scripts\pythonw.exe"
 strSchedulerPath = strScriptPath & "\scheduler.py"
 
-' Verifica daca pythonw.exe exista in venv
+' Check if pythonw.exe exists in venv
 If objFSO.FileExists(strPythonPath) Then
-    ' Ruleaza cu pythonw din venv
+    ' Run with pythonw from venv
     strCommand = """" & strPythonPath & """ """ & strSchedulerPath & """"
 Else
-    ' Fallback: foloseste pythonw din sistem
+    ' Fallback: use system pythonw
     strCommand = "pythonw """ & strSchedulerPath & """"
 End If
 
-' Ruleaza COMPLET ASCUNS (0 = fereastra invizibila, False = asteapta terminare)
+' Run COMPLETELY HIDDEN (0 = invisible window, False = don't wait for completion)
 objShell.Run strCommand, 0, False
 
-' 0 = SW_HIDE (complet ascuns, fara consola, fara nimic)
-' False = nu astepta terminare (permite scheduler sa ruleze in background)
+' 0 = SW_HIDE (completely hidden, no console, nothing)
+' False = don't wait for completion (allows scheduler to run in background)

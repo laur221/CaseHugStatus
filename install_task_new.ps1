@@ -1,5 +1,5 @@
-# CasehugBot Task Scheduler - Instalare Automata
-# Ruleaza ca Administrator: Right-click -> Run as Administrator
+# CasehugBot Task Scheduler - Automatic Installation
+# Run as Administrator: Right-click -> Run as Administrator
 
 param(
     [string]$Action = "install"
@@ -16,21 +16,21 @@ function Test-Administrator {
 }
 
 function Install-Task {
-    Write-Host "Instalare Task Scheduler..." -ForegroundColor Yellow
+    Write-Host "Installing Task Scheduler..." -ForegroundColor Yellow
     
     if (-not (Test-Path $scriptPath)) {
-        Write-Host "Eroare: $scriptPath nu exista!" -ForegroundColor Red
+        Write-Host "Error: $scriptPath does not exist!" -ForegroundColor Red
         return $false
     }
     
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($existingTask) {
-        Write-Host "Sterg task existent..." -ForegroundColor Yellow
+        Write-Host "Removing existing task..." -ForegroundColor Yellow
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
     
     try {
-        # Foloseste wscript.exe pentru a rula VBScript-ul complet ascuns
+        # Use wscript.exe to run VBScript completely hidden
         $wscriptPath = "C:\Windows\System32\wscript.exe"
         $action = New-ScheduledTaskAction -Execute $wscriptPath -Argument "`"$scriptPath`"" -WorkingDirectory $workingDir
         
@@ -45,7 +45,7 @@ function Install-Task {
             -MultipleInstances IgnoreNew `
             -ExecutionTimeLimit (New-TimeSpan -Hours 0)
         
-        # Principal - foloseste utilizatorul curent cu privilegii maxime
+        # Principal - use current user with highest privileges
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         $principal = New-ScheduledTaskPrincipal `
             -UserId $currentUser `
@@ -58,48 +58,48 @@ function Install-Task {
             -Trigger $trigger `
             -Settings $settings `
             -Principal $principal `
-            -Description "CasehugBot - Tracking individual per cont (verificare la 5 minute)" `
+            -Description "CasehugBot - Individual per-account tracking (check every 5 minutes)" `
             -Force | Out-Null
         
-        Write-Host "Task Scheduler instalat cu succes!" -ForegroundColor Green
+        Write-Host "Task Scheduler installed successfully!" -ForegroundColor Green
         Write-Host ""
-        Write-Host "Detalii:" -ForegroundColor Cyan
-        Write-Host "  Nume: $taskName"
-        Write-Host "  Trigger: La pornire + repetare la 5 minute"
+        Write-Host "Details:" -ForegroundColor Cyan
+        Write-Host "  Name: $taskName"
+        Write-Host "  Trigger: At startup + repeat every 5 minutes"
         Write-Host "  Script: $scriptPath"
         Write-Host ""
         
         return $true
     }
     catch {
-        Write-Host "Eroare instalare: $_" -ForegroundColor Red
+        Write-Host "Installation error: $_" -ForegroundColor Red
         return $false
     }
 }
 
 function Uninstall-Task {
-    Write-Host "Dezinstalare Task Scheduler..." -ForegroundColor Yellow
+    Write-Host "Uninstalling Task Scheduler..." -ForegroundColor Yellow
     
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Write-Host "Task sters cu succes!" -ForegroundColor Green
+        Write-Host "Task removed successfully!" -ForegroundColor Green
     }
     else {
-        Write-Host "Task-ul nu exista" -ForegroundColor Yellow
+        Write-Host "Task does not exist" -ForegroundColor Yellow
     }
 }
 
 function Start-TaskManual {
-    Write-Host "Pornire task..." -ForegroundColor Yellow
+    Write-Host "Starting task..." -ForegroundColor Yellow
     
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task) {
         Start-ScheduledTask -TaskName $taskName
-        Write-Host "Task pornit!" -ForegroundColor Green
+        Write-Host "Task started!" -ForegroundColor Green
     }
     else {
-        Write-Host "Task-ul nu exista!" -ForegroundColor Red
+        Write-Host "Task does not exist!" -ForegroundColor Red
     }
 }
 
@@ -110,17 +110,17 @@ function Show-Status {
         $info = Get-ScheduledTaskInfo -TaskName $taskName
         
         Write-Host ""
-        Write-Host "STATUS TASK SCHEDULER" -ForegroundColor Cyan
-        Write-Host "Nume: $($task.TaskName)" -ForegroundColor White
+        Write-Host "TASK SCHEDULER STATUS" -ForegroundColor Cyan
+        Write-Host "Name: $($task.TaskName)" -ForegroundColor White
         Write-Host "Status: $($task.State)" -ForegroundColor White
-        Write-Host "Ultima rulare: $($info.LastRunTime)" -ForegroundColor White
-        Write-Host "Urmatoare rulare: $($info.NextRunTime)" -ForegroundColor White
+        Write-Host "Last run: $($info.LastRunTime)" -ForegroundColor White
+        Write-Host "Next run: $($info.NextRunTime)" -ForegroundColor White
         Write-Host ""
     }
     else {
         Write-Host ""
-        Write-Host "Task-ul nu este instalat" -ForegroundColor Yellow
-        Write-Host "Ruleaza: .\install_task_new.ps1 install" -ForegroundColor Cyan
+        Write-Host "Task is not installed" -ForegroundColor Yellow
+        Write-Host "Run: .\install_task_new.ps1 install" -ForegroundColor Cyan
         Write-Host ""
     }
 }
@@ -131,13 +131,13 @@ Write-Host "CASEHUGBOT SCHEDULER - TASK INSTALLER" -ForegroundColor Cyan
 Write-Host ""
 
 if (-not (Test-Administrator)) {
-    Write-Host "EROARE: Acest script necesita privilegii de Administrator!" -ForegroundColor Red
+    Write-Host "ERROR: This script requires Administrator privileges!" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Solutie:" -ForegroundColor Yellow
-    Write-Host "  1. Inchide fereastra PowerShell"
-    Write-Host "  2. Click dreapta pe PowerShell"
-    Write-Host "  3. Selecteaza Run as Administrator"
-    Write-Host "  4. Ruleaza din nou scriptul"
+    Write-Host "Solution:" -ForegroundColor Yellow
+    Write-Host "  1. Close PowerShell window"
+    Write-Host "  2. Right-click on PowerShell"
+    Write-Host "  3. Select Run as Administrator"
+    Write-Host "  4. Run the script again"
     Write-Host ""
     exit 1
 }
@@ -145,11 +145,11 @@ if (-not (Test-Administrator)) {
 switch ($Action.ToLower()) {
     "install" {
         if (Install-Task) {
-            Write-Host "Instalare completata!" -ForegroundColor Green
+            Write-Host "Installation complete!" -ForegroundColor Green
             Write-Host ""
             Write-Host "NEXT STEPS:" -ForegroundColor Cyan
-            Write-Host "  1. Task-ul va porni automat la restart"
-            Write-Host "  2. Sau porneste manual: .\install_task_new.ps1 start"
+            Write-Host "  1. Task will start automatically at restart"
+            Write-Host "  2. Or start manually: .\install_task_new.ps1 start"
             Write-Host ""
         }
     }

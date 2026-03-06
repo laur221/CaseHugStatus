@@ -1,9 +1,9 @@
 @echo off
-:: Reinstaleaza task-ul cu protectie contra instante multiple
+:: Reinstall task with multiple instance protection
 cd /d "%~dp0"
 
 echo ===================================================
-echo OPRESC TOATE PROCESELE PYTHON SI CHROME
+echo STOPPING ALL PYTHON AND CHROME PROCESSES
 echo ===================================================
 taskkill /F /IM python.exe 2>nul
 taskkill /F /IM pythonw.exe 2>nul
@@ -16,11 +16,11 @@ powershell -ExecutionPolicy Bypass -Command "Start-Process powershell -ArgumentL
 
 echo.
 echo ===================================================
-echo REINSTALARE COMPLETA!
+echo COMPLETE REINSTALL!
 echo ===================================================
-echo Protectii active:
-echo  [+] Lock file in Python (previne rulari multiple)
-echo  [+] Task Scheduler: IgnoreNew (nu porneste daca ruleaza)
-echo  [+] Browsere minimizate automat
+echo Active protections:
+echo  [+] Lock file in Python (prevents multiple runs)
+echo  [+] Task Scheduler: IgnoreNew (won't start if already running)
+echo  [+] Browsers automatically minimized
 echo ===================================================
 pause
