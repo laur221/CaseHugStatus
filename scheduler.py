@@ -242,6 +242,24 @@ class CasehugScheduler:
         except Exception as e:
             return False
     
+    def check_internet_connection(self):
+        """Verifică dacă există conexiune la internet"""
+        import socket
+        
+        try:
+            # Încearcă să conecteze la Google DNS (8.8.8.8) pe port 53
+            # Timeout de 3 secunde pentru a nu aștepta prea mult
+            socket.setdefaulttimeout(3)
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+            return True
+        except socket.error:
+            # Încearcă Cloudflare DNS (1.1.1.1) ca backup
+            try:
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("1.1.1.1", 53))
+                return True
+            except socket.error:
+                return False
+    
     async def run_bot_for_accounts(self, account_names):
         """Rulează botul pentru conturile specificate"""
         try:
@@ -338,7 +356,16 @@ class CasehugScheduler:
         for acc in ready_accounts:
             print(f"   • {acc['name']}: {acc['reason']}")
         
-        # 3. Verifică Steam dacă este necesar
+        # 3. Verifică conexiunea la internet
+        print(f"\n🌐 Verificare internet...")
+        if not self.check_internet_connection():
+            print("❌ NU EXISTĂ CONEXIUNE LA INTERNET!")
+            print("   💡 Conectează-te la internet și încearcă din nou")
+            print("   ⏳ Următoarea verificare în 5 minute...")
+            return False
+        print("✅ Internet conectat")
+        
+        # 4. Verifică Steam dacă este necesar
         require_steam = self.config.get('require_steam_login', True)
         if require_steam:
             accounts_with_steam = self.config.get('accounts_with_steam', [])
