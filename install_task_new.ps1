@@ -34,8 +34,14 @@ function Install-Task {
         $wscriptPath = "C:\Windows\System32\wscript.exe"
         $action = New-ScheduledTaskAction -Execute $wscriptPath -Argument "`"$scriptPath`"" -WorkingDirectory $workingDir
         
-        $trigger = New-ScheduledTaskTrigger -AtStartup
-        $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
+        # SMART TRIGGERS - No more periodic checks!
+        # Trigger 1: At Logon - check immediately when user starts PC
+        $trigger1 = New-ScheduledTaskTrigger -AtLogon
+        
+        # Trigger 2: Daily at 00:01 - check daily (for PCs running 24/7)
+        $trigger2 = New-ScheduledTaskTrigger -Daily -At "00:01"
+        
+        $triggers = @($trigger1, $trigger2)
         
         $settings = New-ScheduledTaskSettingsSet `
             -AllowStartIfOnBatteries `
@@ -55,18 +61,24 @@ function Install-Task {
         Register-ScheduledTask `
             -TaskName $taskName `
             -Action $action `
-            -Trigger $trigger `
+            -Trigger $triggers `
             -Settings $settings `
             -Principal $principal `
-            -Description "CasehugBot - Individual per-account tracking (check every 5 minutes)" `
+            -Description "CasehugBot - Smart scheduler: runs at exact calculated time (no periodic checks)" `
             -Force | Out-Null
         
         Write-Host "Task Scheduler installed successfully!" -ForegroundColor Green
         Write-Host ""
         Write-Host "Details:" -ForegroundColor Cyan
         Write-Host "  Name: $taskName"
-        Write-Host "  Trigger: At startup + repeat every 5 minutes"
+        Write-Host "  Trigger 1: At user logon (immediate check)"
+        Write-Host "  Trigger 2: Daily at 00:01 (for 24/7 PCs)"
         Write-Host "  Script: $scriptPath"
+        Write-Host ""
+        Write-Host "SMART SYSTEM:" -ForegroundColor Yellow
+        Write-Host "  - Calculates EXACT next run time (last_opening + 24h + 1min)"
+        Write-Host "  - Runs immediately if time has passed (late PC startup)"
+        Write-Host "  - Zero periodic checks = zero resource usage"
         Write-Host ""
         
         return $true

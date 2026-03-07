@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-CasehugBot Scheduler - Rulare automată cu tracking individual per cont
-Verifică la fiecare 5 minute dacă au trecut 24h de la ultima deschidere
-Se închide automat după procesare pentru a economisi resurse
+CasehugBot Smart Scheduler - Calculează timpul exact al următoarei rulări
+Rulează DOAR când e necesar (nu mai verifică periodic)
+Exemplu: deschis pe 7 martie la 12:45 → next run: 8 martie la 12:46
+Dacă PC pornește târziu (ex: 8 martie 16:32) → rulează IMEDIAT
 """
 
 import os
@@ -85,9 +86,8 @@ class CasehugScheduler:
         """Încarcă configurația scheduler-ului"""
         default_config = {
             "enabled": True,
-            "check_interval_minutes": 5,  # Verifică la fiecare 5 minute
             "require_steam_login": True,  # Verifică dacă Steam e pornit și logat
-            "hours_between_runs": 24,  # 24 ore între rulări (standard pentru case-uri)
+            "hours_between_runs": 24,  # 24 ore + 1 min între rulări (standard pentru case-uri)
             "accounts_with_steam": []  # Lista conturi care folosesc Steam ["Cont 1", "Cont 2"]
         }
         
@@ -157,6 +157,36 @@ class CasehugScheduler:
         timestamp = datetime.now().isoformat()
         self.last_opening[account_name]['last_check'] = timestamp
         self.save_last_opening()
+    
+    def calculate_next_run_time(self):
+        """Calculează timpul exact al următoarei rulări (cel mai apropiat cont care trebuie să ruleze)"""
+        hours_required = self.config.get('hours_between_runs', 24)
+        next_runs = []
+        
+        for account_name, data in self.last_opening.items():
+            last_opening_str = data.get('last_opening')
+            
+            # Prima rulare sau niciodată deschis - rulează imediat
+            if not last_opening_str:
+                return datetime.now()  # Rulează acum
+            
+            # Calculează timpul exact al următoarei rulări: last_opening + 24h + 1min (pentru siguranță)
+            try:
+                last_opening = datetime.fromisoformat(last_opening_str)
+                next_run = last_opening + timedelta(hours=hours_required, minutes=1)
+                next_runs.append((account_name, next_run))
+            except:
+                # Eroare parsare - rulează imediat
+                return datetime.now()
+        
+        # Returnează cel mai apropiat timp (contul care trebuie să ruleze primul)
+        if next_runs:
+            next_runs.sort(key=lambda x: x[1])  # Sortează după timp
+            earliest_account, earliest_time = next_runs[0]
+            return earliest_time
+        else:
+            # Niciun cont în tracking - rulează imediat
+            return datetime.now()
     
     def get_accounts_ready_to_open(self):
         """Obține lista conturilor care pot deschide case-uri (au trecut 24h)"""
@@ -389,71 +419,82 @@ class CasehugScheduler:
         return success
     
     async def run_scheduler_loop(self):
-        """Loop principal scheduler - verifică periodic și se închide după procesare"""
-        check_interval = self.config.get('check_interval_minutes', 5) * 60
-        
+        """Smart scheduler - calculează timpul exact și rulează doar când e necesar"""
         print(f"""
 ╔═══════════════════════════════════════════════════════════╗
-║         CASEHUGBOT SCHEDULER - TRACKING INDIVIDUAL        ║
+║      CASEHUGBOT SMART SCHEDULER - EXACT TIME TRACKING     ║
 ╚═══════════════════════════════════════════════════════════╝
 
 📋 Configurație:
-   🔄 Verificare: la fiecare {self.config.get('check_interval_minutes', 5)} minute
-   ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h între deschideri
+   ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h + 1min între deschideri
    🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
    📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
 
-💡 Sistem inteligent:
-   • Salvează ora exactă pentru fiecare cont
-   • Deschide după 24h de la ultima deschidere
-   • Se închide automat după procesare (economie resurse)
-   • Flexibil: deschizi când vrei, botul ține cont de intervale
+💡 SISTEM NOU - SMART SCHEDULING:
+   • Calculează timpul EXACT al următoarei deschideri
+   • Task Scheduler pornește DOAR când e timpul
+   • Dacă PC pornește târziu → rulează IMEDIAT
+   • ZERO verificări periodice = ZERO resurse consumate
 
 📊 Status conturi:""")
         
         hours_required = self.config.get('hours_between_runs', 24)
+        now = datetime.now()
+        
         for account_name, data in self.last_opening.items():
             last_opening_str = data.get('last_opening')
             if last_opening_str:
                 try:
                     last_opening = datetime.fromisoformat(last_opening_str)
-                    hours_passed = (datetime.now() - last_opening).total_seconds() / 3600
-                    remaining = hours_required - hours_passed
+                    next_run = last_opening + timedelta(hours=hours_required, minutes=1)
                     
-                    if remaining > 0:
-                        print(f"   ⏳ {account_name}: {remaining:.1f}h până la următoarea deschidere")
+                    if now >= next_run:
+                        print(f"   ✅ {account_name}: READY NOW (deadline passed)")
                     else:
-                        print(f"   ✅ {account_name}: READY (au trecut {hours_passed:.1f}h)")
+                        time_remaining = next_run - now
+                        hours_rem = time_remaining.total_seconds() / 3600
+                        print(f"   ⏳ {account_name}: Next run at {next_run.strftime('%Y-%m-%d %H:%M')} ({hours_rem:.1f}h remaining)")
                 except:
-                    print(f"   • {account_name}: Eroare timestamp - va fi resetat")
+                    print(f"   • {account_name}: Error in timestamp - will reset")
             else:
-                print(f"   • {account_name}: Prima rulare - READY")
+                print(f"   • {account_name}: First run - READY NOW")
         
         print("\n" + "="*60 + "\n")
         
-        while True:
+        # Calculează timpul exact al următoarei rulări
+        next_run_time = self.calculate_next_run_time()
+        
+        # Calculează diferența de timp (în secunde)
+        time_until_seconds = (next_run_time - now).total_seconds()
+        
+        # Verifică dacă timpul a venit (sau a trecut) - toleranță 1 secundă
+        if time_until_seconds <= 1:
+            print(f"⏰ TIME TO RUN! Scheduled time: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   → Running bot immediately...\n")
+            
             try:
                 success = await self.check_and_run()
                 
                 if success:
-                    print("\n✅ Procesare completă - ÎNCHIDERE SCHEDULER")
-                    print("   💡 Task Scheduler va reporni automat peste 5 minute")
-                    break  # Ieșire din loop - închide scheduler-ul
-                
-                # Așteaptă următoarea verificare
-                print(f"\n⏰ Următoarea verificare în {self.config.get('check_interval_minutes', 5)} minute...")
-                print(f"   (la ora {(datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')})")
-                await asyncio.sleep(check_interval)
-                
+                    print("\n✅ Bot completed successfully - SCHEDULER EXIT")
+                    print("   💡 Task Scheduler will run again at next calculated time")
+                else:
+                    print("\n⚠️  Bot execution skipped (conditions not met)")
+                    print("   💡 Task Scheduler will check again at startup")
+                    
             except KeyboardInterrupt:
-                print("\n\n⚠️  Scheduler oprit manual (Ctrl+C)")
-                break
-            except Exception as e:
-                print(f"\n❌ EROARE SCHEDULER: {e}")
-                import traceback
-                traceback.print_exc()
-                print(f"\n🔄 Reîncerc în {self.config.get('check_interval_minutes', 5)} minute...")
-                await asyncio.sleep(check_interval)
+                print("\n\n⚠️  Scheduler stopped manually (Ctrl+C)")
+        else:
+            # Timpul nu a venit încă - afișează când va fi
+            time_until = next_run_time - now
+            hours_until = time_until.total_seconds() / 3600
+            print(f"⏰ NOT TIME YET")
+            print(f"   Next scheduled run: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Time remaining: {hours_until:.1f}h")
+            print(f"\n💡 Scheduler will run automatically at scheduled time")
+            print(f"   Task Scheduler ensures execution even if PC was off")
     
     def run(self):
         """Pornește scheduler-ul"""

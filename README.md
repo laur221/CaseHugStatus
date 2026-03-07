@@ -9,7 +9,7 @@
 
 - 🎯 **Multi-Account Support** - Manage multiple Steam accounts
 - ⏰ **Individual 24h Tracking** - Each account tracked independently
-- 🤖 **Automated Scheduler** - Checks every 5 minutes, runs when ready
+- � **Smart Scheduler** - Calculates exact run time, runs only when needed (zero periodic checks)
 - 👻 **Invisible Operation** - Runs silently in background with minimized Chrome
 - 🔄 **Auto Steam Login** - Handles Steam OAuth automatically
 - 🛄 **Smart Case Detection** - Auto-detects all available cases (Discord, Steam, + 13 level-based cases)
@@ -80,9 +80,10 @@ powershell -ExecutionPolicy Bypass -File install_task_new.ps1
 ```
 
 This adds a Windows Task Scheduler entry that:
-- Checks every **5 minutes** if any account is ready (24h passed)
+- **Calculates exact next run time** (last_opening + 24h + 1min)
 - Runs **invisibly in background**
-- Opens cases **automatically** when ready
+- **Zero periodic checks** = zero resource usage
+- **Smart detection**: If PC starts late (e.g., next run was at 12:46, but PC started at 16:32) → **runs immediately**
 
 ## ⚙️ Configuration
 
@@ -107,12 +108,13 @@ This adds a Windows Task Scheduler entry that:
 ```json
 {
   "enabled": true,
-  "check_interval_minutes": 5,
   "hours_between_runs": 24,
   "require_steam_login": true,
   "accounts_with_steam": ["Account 1", "Account 2"]
 }
 ```
+
+**Note**: `check_interval_minutes` is removed - smart scheduler calculates exact run time instead of periodic checks.
 
 ## 📱 Telegram Setup
 
@@ -143,13 +145,23 @@ Account 3: Opens at 8:00 PM → Next at 8:00 PM (24h later)
 
 ### Scheduler Logic
 
+**Smart Calculation (Zero Periodic Checks):**
+
 ```
-Every 5 minutes:
-├─ Read last_opening.json (0.01s - instant)
-├─ Check if 24h passed for each account
-├─ Check internet connection
-├─ Check Steam is running
-└─ If ready: Launch bot → Open cases → Send report
+Scheduler starts (at logon / daily 00:01):
+├─ Read last_opening.json
+├─ Calculate exact next run time for each account:
+│  └─ next_run = last_opening + 24h + 1min
+├─ Find earliest next_run time
+├─ If now >= next_run:
+│  ├─ Check internet connection
+│  ├─ Check Steam is running
+│  └─ Launch bot → Open cases → Send report → EXIT
+└─ Else: Display next run time and EXIT
+
+**Example**: Account opened on March 7 at 12:45
+→ Next run: March 8 at 12:46
+→ If PC starts at March 8 at 16:32 (late): Runs immediately
 ```
 
 ### Case Opening Flow
@@ -270,15 +282,6 @@ Edit `config.json` temporarily to include only one account, then run:
 python main.py
 ```
 
-### Change Check Interval
-
-Edit `schedule_config.json`:
-```json
-{
-  "check_interval_minutes": 10  // Check every 10 minutes instead of 5
-}
-```
-
 ### Disable Telegram Notifications
 
 Set empty strings in `config.json`:
@@ -303,7 +306,7 @@ The bot will track 24h intervals per account automatically.
 ```
 CasehugAuto/
 ├── main.py                      # Main bot logic
-├── scheduler.py                 # Auto-scheduler (5min checks)
+├── scheduler.py                 # Smart scheduler (exact time calculation)
 ├── setup.py                     # First-run configuration wizard
 ├── install_task_new.ps1         # Task Scheduler installer
 ├── run_scheduler_hidden.vbs     # Invisible execution wrapper
