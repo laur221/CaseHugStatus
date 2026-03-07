@@ -108,13 +108,27 @@ This adds a Windows Task Scheduler entry that:
 ```json
 {
   "enabled": true,
+  "scheduler_mode": "smart",
+  "check_interval_minutes": 5,
   "hours_between_runs": 24,
   "require_steam_login": true,
   "accounts_with_steam": ["Account 1", "Account 2"]
 }
 ```
 
-**Note**: `check_interval_minutes` is removed - smart scheduler calculates exact run time instead of periodic checks.
+**Scheduler Modes:**
+
+| Mode | Description | Resource Usage | Best For |
+|------|-------------|----------------|----------|
+| **`smart`** (default) | Calculates exact run time, runs only when needed | **Zero** - no periodic checks | Most users, laptops |
+| **`periodic`** | Checks every X minutes (classic behavior) | Low - checks every 5min | 24/7 PCs, prefer constant monitoring |
+
+**Config Parameters:**
+- `scheduler_mode`: `"smart"` or `"periodic"` (default: `smart`)
+- `check_interval_minutes`: For periodic mode - check every X minutes (default: 5)
+- `hours_between_runs`: Hours between case openings (default: 24)
+- `require_steam_login`: Check if Steam is running and logged in (default: true)
+- `accounts_with_steam`: List of accounts that use Steam (empty = all accounts)
 
 ## 📱 Telegram Setup
 
@@ -145,7 +159,9 @@ Account 3: Opens at 8:00 PM → Next at 8:00 PM (24h later)
 
 ### Scheduler Logic
 
-**Smart Calculation (Zero Periodic Checks):**
+**Two Modes Available:**
+
+#### 1. SMART Mode (Default - Zero Periodic Checks)
 
 ```
 Scheduler starts (at logon / daily 00:01):
@@ -162,6 +178,23 @@ Scheduler starts (at logon / daily 00:01):
 **Example**: Account opened on March 7 at 12:45
 → Next run: March 8 at 12:46
 → If PC starts at March 8 at 16:32 (late): Runs immediately
+```
+
+#### 2. PERIODIC Mode (Classic - Check Every X Minutes)
+
+```
+Scheduler starts (at logon / daily 00:01):
+└─ LOOP every 5 minutes:
+   ├─ Read last_opening.json
+   ├─ Check if 24h passed for each account
+   ├─ If any account ready:
+   │  ├─ Check internet connection
+   │  ├─ Check Steam is running
+   │  └─ Launch bot → Open cases → Send report → EXIT
+   └─ Wait 5 minutes and repeat
+
+**Example**: Account ready at 12:45
+→ Next check: 12:50 (runs within 5 minutes of being ready)
 ```
 
 ### Case Opening Flow
@@ -274,6 +307,31 @@ powershell -ExecutionPolicy Bypass -File install_task_new.ps1
 ```
 
 ## 🔧 Advanced Usage
+
+### Switch Between Scheduler Modes
+
+**Switch to SMART mode** (exact time calculation, zero periodic checks):
+```json
+// schedule_config.json
+{
+  "scheduler_mode": "smart"
+}
+```
+- ✅ Zero resource usage (no periodic checks)
+- ✅ Runs immediately if PC starts late
+- ✅ Best for laptops and daily-use PCs
+
+**Switch to PERIODIC mode** (check every 5 minutes):
+```json
+// schedule_config.json
+{
+  "scheduler_mode": "periodic",
+  "check_interval_minutes": 5
+}
+```
+- ✅ Constant monitoring (classic behavior)
+- ✅ Runs within 5 minutes of being ready
+- ✅ Best for 24/7 PCs or servers
 
 ### Manual Run for Specific Account
 

@@ -86,6 +86,8 @@ class CasehugScheduler:
         """Încarcă configurația scheduler-ului"""
         default_config = {
             "enabled": True,
+            "scheduler_mode": "smart",  # "smart" = exact time calculation | "periodic" = check every X minutes
+            "check_interval_minutes": 5,  # For periodic mode only - check every X minutes
             "require_steam_login": True,  # Verifică dacă Steam e pornit și logat
             "hours_between_runs": 24,  # 24 ore + 1 min între rulări (standard pentru case-uri)
             "accounts_with_steam": []  # Lista conturi care folosesc Steam ["Cont 1", "Cont 2"]
@@ -419,18 +421,90 @@ class CasehugScheduler:
         return success
     
     async def run_scheduler_loop(self):
-        """Smart scheduler - calculează timpul exact și rulează doar când e necesar"""
+        """Dual-mode scheduler: SMART (exact time) or PERIODIC (check every X min)"""
+        mode = self.config.get('scheduler_mode', 'smart').lower()
+        
+        if mode == 'periodic':
+            await self._run_periodic_mode()
+        else:
+            await self._run_smart_mode()
+    
+    async def _run_periodic_mode(self):
+        """PERIODIC MODE - Check every X minutes (old behavior)"""
+        check_interval = self.config.get('check_interval_minutes', 5) * 60
+        
         print(f"""
 ╔═══════════════════════════════════════════════════════════╗
-║      CASEHUGBOT SMART SCHEDULER - EXACT TIME TRACKING     ║
+║      CASEHUGBOT SCHEDULER - PERIODIC MODE (CLASSIC)       ║
 ╚═══════════════════════════════════════════════════════════╝
 
 📋 Configurație:
+   🔄 Mode: PERIODIC (verifică constant)
+   ⏱️  Interval verificare: {self.config.get('check_interval_minutes', 5)} minute
+   ⏳ Interval deschideri: {self.config.get('hours_between_runs', 24)}h
+   🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
+   📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
+
+💡 PERIODIC SYSTEM:
+   • Verifică la fiecare {self.config.get('check_interval_minutes', 5)} minute dacă au trecut 24h
+   • Rulează automat când conturile sunt ready
+   • Se închide după procesare (Task Scheduler repornește)
+
+📊 Status conturi:""")
+        
+        hours_required = self.config.get('hours_between_runs', 24)
+        for account_name, data in self.last_opening.items():
+            last_opening_str = data.get('last_opening')
+            if last_opening_str:
+                try:
+                    last_opening = datetime.fromisoformat(last_opening_str)
+                    hours_passed = (datetime.now() - last_opening).total_seconds() / 3600
+                    remaining = hours_required - hours_passed
+                    
+                    if remaining > 0:
+                        print(f"   ⏳ {account_name}: {remaining:.1f}h până la următoarea deschidere")
+                    else:
+                        print(f"   ✅ {account_name}: READY (au trecut {hours_passed:.1f}h)")
+                except:
+                    print(f"   • {account_name}: Eroare timestamp - va fi resetat")
+            else:
+                print(f"   • {account_name}: Prima rulare - READY")
+        
+        print("\n" + "="*60 + "\n")
+        
+        # Loop periodic - verifică constant
+        while True:
+            try:
+                success = await self.check_and_run()
+                
+                if success:
+                    print("\n✅ Procesare completă - ÎNCHIDERE SCHEDULER")
+                    print("   💡 Task Scheduler va reporni automat")
+                    break  # Exit din loop - închide scheduler-ul
+                
+                # Așteaptă următoarea verificare
+                print(f"\n⏰ Următoarea verificare în {self.config.get('check_interval_minutes', 5)} minute...")
+                print(f"   (la ora {(datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')})")
+                await asyncio.sleep(check_interval)
+                
+            except KeyboardInterrupt:
+                print("\n\n⚠️  Scheduler oprit manual (Ctrl+C)")
+                break
+    
+    async def _run_smart_mode(self):
+        """SMART MODE - Calculate exact time, run only when needed (new behavior)"""
+        print(f"""
+╔═══════════════════════════════════════════════════════════╗
+║      CASEHUGBOT SCHEDULER - SMART MODE (ZERO CHECKS)      ║
+╚═══════════════════════════════════════════════════════════╝
+
+📋 Configurație:
+   🧠 Mode: SMART (calcul exact, zero verificări periodice)
    ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h + 1min între deschideri
    🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
    📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
 
-💡 SISTEM NOU - SMART SCHEDULING:
+💡 SMART SYSTEM:
    • Calculează timpul EXACT al următoarei deschideri
    • Task Scheduler pornește DOAR când e timpul
    • Dacă PC pornește târziu → rulează IMEDIAT
@@ -495,6 +569,8 @@ class CasehugScheduler:
             print(f"   Time remaining: {hours_until:.1f}h")
             print(f"\n💡 Scheduler will run automatically at scheduled time")
             print(f"   Task Scheduler ensures execution even if PC was off")
+            print(f"\n💡 TIP: Switch to PERIODIC mode if you prefer constant checking:")
+            print(f'   Edit schedule_config.json: "scheduler_mode": "periodic"')
     
     def run(self):
         """Pornește scheduler-ul"""
