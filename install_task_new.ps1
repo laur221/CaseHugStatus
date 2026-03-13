@@ -34,14 +34,9 @@ function Install-Task {
         $wscriptPath = "C:\Windows\System32\wscript.exe"
         $action = New-ScheduledTaskAction -Execute $wscriptPath -Argument "`"$scriptPath`"" -WorkingDirectory $workingDir
         
-        # SMART TRIGGERS - No more periodic checks!
-        # Trigger 1: At Logon - check immediately when user starts PC
-        $trigger1 = New-ScheduledTaskTrigger -AtLogon
-        
-        # Trigger 2: Daily at 00:01 - check daily (for PCs running 24/7)
-        $trigger2 = New-ScheduledTaskTrigger -Daily -At "00:01"
-        
-        $triggers = @($trigger1, $trigger2)
+        # Trigger: At Logon only
+        # Scheduler itself handles periodic checks based on schedule_config.json
+        $trigger = New-ScheduledTaskTrigger -AtLogon
         
         $settings = New-ScheduledTaskSettingsSet `
             -AllowStartIfOnBatteries `
@@ -61,24 +56,23 @@ function Install-Task {
         Register-ScheduledTask `
             -TaskName $taskName `
             -Action $action `
-            -Trigger $triggers `
+            -Trigger $trigger `
             -Settings $settings `
             -Principal $principal `
-            -Description "CasehugBot - Smart scheduler: runs at exact calculated time (no periodic checks)" `
+            -Description "CasehugBot - Starts at logon; scheduler.py handles periodic checks" `
             -Force | Out-Null
         
         Write-Host "Task Scheduler installed successfully!" -ForegroundColor Green
         Write-Host ""
         Write-Host "Details:" -ForegroundColor Cyan
         Write-Host "  Name: $taskName"
-        Write-Host "  Trigger 1: At user logon (immediate check)"
-        Write-Host "  Trigger 2: Daily at 00:01 (for 24/7 PCs)"
+        Write-Host "  Trigger: At user logon"
         Write-Host "  Script: $scriptPath"
         Write-Host ""
-        Write-Host "SMART SYSTEM:" -ForegroundColor Yellow
-        Write-Host "  - Calculates EXACT next run time (last_opening + 24h + 1min)"
-        Write-Host "  - Runs immediately if time has passed (late PC startup)"
-        Write-Host "  - Zero periodic checks = zero resource usage"
+        Write-Host "PERIODIC SYSTEM:" -ForegroundColor Yellow
+        Write-Host "  - Task starts scheduler.py when user logs in"
+        Write-Host "  - scheduler.py checks every X minutes from schedule_config.json"
+        Write-Host "  - No fixed 00:01 trigger in Task Scheduler"
         Write-Host ""
         
         return $true

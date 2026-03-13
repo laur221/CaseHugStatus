@@ -1,6 +1,10 @@
 {
   "telegram_bot_token": "YOUR_BOT_TOKEN_HERE",
   "telegram_chat_id": "YOUR_CHAT_ID_HERE",
+  "steam_login_debug_enabled": true,
+  "steam_debug_log_file": "logs/steam_login_debug.log",
+  "steam_debug_log_retention_days": 2,
+  "steam_login_max_retries": 1,
   "accounts": [
     {
       "name": "Account 1",

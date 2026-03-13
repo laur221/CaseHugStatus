@@ -86,8 +86,9 @@ class CasehugScheduler:
         """Încarcă configurația scheduler-ului"""
         default_config = {
             "enabled": True,
-            "scheduler_mode": "smart",  # "smart" = exact time calculation | "periodic" = check every X minutes
-            "check_interval_minutes": 5,  # For periodic mode only - check every X minutes
+            "scheduler_mode": "periodic",  # "smart" = exact time calculation | "periodic" = check every X minutes
+            "check_interval_minutes": 30,  # For periodic mode only - check every X minutes
+            "cooldown_grace_minutes": 1,  # Added after hours_between_runs to avoid edge timing issues
             "require_steam_login": True,  # Verifică dacă Steam e pornit și logat
             "hours_between_runs": 24,  # 24 ore + 1 min între rulări (standard pentru case-uri)
             "accounts_with_steam": []  # Lista conturi care folosesc Steam ["Cont 1", "Cont 2"]
@@ -163,6 +164,7 @@ class CasehugScheduler:
     def calculate_next_run_time(self):
         """Calculează timpul exact al următoarei rulări (cel mai apropiat cont care trebuie să ruleze)"""
         hours_required = self.config.get('hours_between_runs', 24)
+        grace_minutes = self.config.get('cooldown_grace_minutes', 1)
         next_runs = []
         
         for account_name, data in self.last_opening.items():
@@ -172,10 +174,10 @@ class CasehugScheduler:
             if not last_opening_str:
                 return datetime.now()  # Rulează acum
             
-            # Calculează timpul exact al următoarei rulări: last_opening + 24h + 1min (pentru siguranță)
+            # Calculează timpul exact al următoarei rulări: last_opening + hours + grace_minutes
             try:
                 last_opening = datetime.fromisoformat(last_opening_str)
-                next_run = last_opening + timedelta(hours=hours_required, minutes=1)
+                next_run = last_opening + timedelta(hours=hours_required, minutes=grace_minutes)
                 next_runs.append((account_name, next_run))
             except:
                 # Eroare parsare - rulează imediat
@@ -391,9 +393,10 @@ class CasehugScheduler:
         # 3. Verifică conexiunea la internet
         print(f"\n🌐 Verificare internet...")
         if not self.check_internet_connection():
+            check_interval_minutes = self.config.get('check_interval_minutes', 30)
             print("❌ NU EXISTĂ CONEXIUNE LA INTERNET!")
             print("   💡 Conectează-te la internet și încearcă din nou")
-            print("   ⏳ Următoarea verificare în 5 minute...")
+            print(f"   ⏳ Următoarea verificare în {check_interval_minutes} minute...")
             return False
         print("✅ Internet conectat")
         
@@ -407,9 +410,10 @@ class CasehugScheduler:
             if ready_with_steam:
                 print(f"\n🔍 Verificare Steam...")
                 if not self.is_steam_running_and_logged_in():
+                    check_interval_minutes = self.config.get('check_interval_minutes', 30)
                     print("⚠️  STEAM NU ESTE PORNIT SAU NU EȘTI LOGAT")
                     print("   💡 Pornește Steam și loghează-te")
-                    print("   🔄 Voi verifica din nou în 5 minute...")
+                    print(f"   🔄 Voi verifica din nou în {check_interval_minutes} minute...")
                     return False
                 else:
                     print("✅ Steam detectat și logat")
@@ -431,7 +435,8 @@ class CasehugScheduler:
     
     async def _run_periodic_mode(self):
         """PERIODIC MODE - Check every X minutes (old behavior)"""
-        check_interval = self.config.get('check_interval_minutes', 5) * 60
+        check_interval_minutes = self.config.get('check_interval_minutes', 30)
+        check_interval = check_interval_minutes * 60
         
         print(f"""
 ╔═══════════════════════════════════════════════════════════╗
@@ -440,13 +445,13 @@ class CasehugScheduler:
 
 📋 Configurație:
    🔄 Mode: PERIODIC (verifică constant)
-   ⏱️  Interval verificare: {self.config.get('check_interval_minutes', 5)} minute
+    ⏱️  Interval verificare: {check_interval_minutes} minute
    ⏳ Interval deschideri: {self.config.get('hours_between_runs', 24)}h
    🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
    📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
 
 💡 PERIODIC SYSTEM:
-   • Verifică la fiecare {self.config.get('check_interval_minutes', 5)} minute dacă au trecut 24h
+    • Verifică la fiecare {check_interval_minutes} minute dacă au trecut 24h
    • Rulează automat când conturile sunt ready
    • Se închide după procesare (Task Scheduler repornește)
 
@@ -483,7 +488,7 @@ class CasehugScheduler:
                     break  # Exit din loop - închide scheduler-ul
                 
                 # Așteaptă următoarea verificare
-                print(f"\n⏰ Următoarea verificare în {self.config.get('check_interval_minutes', 5)} minute...")
+                print(f"\n⏰ Următoarea verificare în {check_interval_minutes} minute...")
                 print(f"   (la ora {(datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')})")
                 await asyncio.sleep(check_interval)
                 
@@ -493,6 +498,7 @@ class CasehugScheduler:
     
     async def _run_smart_mode(self):
         """SMART MODE - Calculate exact time, run only when needed (new behavior)"""
+        grace_minutes = self.config.get('cooldown_grace_minutes', 1)
         print(f"""
 ╔═══════════════════════════════════════════════════════════╗
 ║      CASEHUGBOT SCHEDULER - SMART MODE (ZERO CHECKS)      ║
@@ -500,7 +506,7 @@ class CasehugScheduler:
 
 📋 Configurație:
    🧠 Mode: SMART (calcul exact, zero verificări periodice)
-   ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h + 1min între deschideri
+    ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h + {grace_minutes}min între deschideri
    🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
    📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
 
@@ -520,7 +526,7 @@ class CasehugScheduler:
             if last_opening_str:
                 try:
                     last_opening = datetime.fromisoformat(last_opening_str)
-                    next_run = last_opening + timedelta(hours=hours_required, minutes=1)
+                    next_run = last_opening + timedelta(hours=hours_required, minutes=grace_minutes)
                     
                     if now >= next_run:
                         print(f"   ✅ {account_name}: READY NOW (deadline passed)")

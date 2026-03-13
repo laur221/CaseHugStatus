@@ -2,11 +2,10 @@ import os
 import json
 import time
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import nodriver as uc
 from nodriver import cdp  # Chrome DevTools Protocol for cookies
 import requests
-# from twocaptcha import TwoCaptcha  # Commented - not used
 import ctypes  # For Windows API - window minimization
 
 # Configuration
@@ -23,10 +22,17 @@ class CasehugBotNodriver:
         self.telegram_chat_id = self.config.get('telegram_chat_id', '')
         self.accounts = self.config.get('accounts', [])
         self.captcha_api_key = self.config.get('2captcha_api_key', '')
+        self.steam_login_debug_enabled = self.config.get('steam_login_debug_enabled', True)
+        self.steam_debug_log_file = self.config.get(
+            'steam_debug_log_file',
+            os.path.join('logs', 'steam_login_debug.log')
+        )
+        self.steam_debug_log_retention_days = int(self.config.get('steam_debug_log_retention_days', 2))
+        self.steam_login_max_retries = int(self.config.get('steam_login_max_retries', 1))
         
         # FlareSolverr URL: Environment variable has priority (for Docker)
         self.flaresolverr_url = os.environ.get('FLARESOLVERR_URL', 
-                                               self.config.get('flaresolverr_url', 'http://localhost:8191/v1'))
+                            self.config.get('flaresolverr_url', 'http://localhost:8191/v1'))
         
         # FlareSolverr sessions for each account (keeps cookies in Docker)
         self.flare_sessions = {}  # {account_name: session_id}
@@ -54,6 +60,61 @@ class CasehugBotNodriver:
                     self.use_flaresolverr = False
             except:
                 self.use_flaresolverr = False
+
+    def log_steam_debug(self, account_name, event, details=None):
+        """Write Steam auto-login diagnostics to logs/steam_login_debug.log."""
+        try:
+            if not self.steam_login_debug_enabled:
+                return
+
+            os.makedirs('logs', exist_ok=True)
+            self.prune_steam_debug_log(retention_days=self.steam_debug_log_retention_days)
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "account": account_name,
+                "event": event,
+                "details": details or {}
+            }
+            with open(self.steam_debug_log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            # Never block bot flow if debug logging fails
+            pass
+
+    def prune_steam_debug_log(self, retention_days=2):
+        """Keep only steam debug log entries newer than retention_days."""
+        try:
+            if not os.path.exists(self.steam_debug_log_file):
+                return
+
+            cutoff = datetime.now() - timedelta(days=retention_days)
+            kept_lines = []
+
+            with open(self.steam_debug_log_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        entry = json.loads(line)
+                        ts = entry.get("timestamp")
+                        if not ts:
+                            continue
+
+                        entry_dt = datetime.fromisoformat(ts)
+                        if entry_dt >= cutoff:
+                            kept_lines.append(line)
+                    except Exception:
+                        # Skip malformed lines
+                        continue
+
+            with open(self.steam_debug_log_file, 'w', encoding='utf-8') as f:
+                if kept_lines:
+                    f.write("\n".join(kept_lines) + "\n")
+        except Exception:
+            # Never block bot flow if retention cleanup fails
+            pass
     
     async def setup_browser(self):
         """Nodriver doesn't require explicit setup - each account will create its own browser"""
@@ -359,9 +420,17 @@ class CasehugBotNodriver:
             traceback.print_exc()
             return True  # Continue anyway
     
-    async def check_steam_login(self, page, account_name):
+    async def check_steam_login(self, page, account_name, retry_attempt=0):
         """Verifică dacă utilizatorul este logat cu Steam (verifică balanta în header)"""
         try:
+            try:
+                self.log_steam_debug(account_name, "check_start", {
+                    "retry_attempt": retry_attempt,
+                    "current_url": page.url
+                })
+            except Exception:
+                pass
+
             content = await page.get_content()
             
             # Verifică dacă există balanta în header (indicator sigur că e logat)
@@ -375,8 +444,16 @@ class CasehugBotNodriver:
                 if header_match:
                     balance = header_match.group(1)
                     print(f"   ✅ {account_name} este logat cu Steam (Balanță: {balance})")
+                    self.log_steam_debug(account_name, "already_logged_in", {
+                        "balance": balance,
+                        "retry_attempt": retry_attempt
+                    })
                 else:
                     print(f"   ✅ {account_name} este logat cu Steam")
+                    self.log_steam_debug(account_name, "already_logged_in", {
+                        "balance": None,
+                        "retry_attempt": retry_attempt
+                    })
                 return True
             else:
                 # Nu există balanță → nu e logat, încearcă auto-login
@@ -403,6 +480,10 @@ class CasehugBotNodriver:
                     
                     if not login_button:
                         print(f"   ❌ Nu am găsit butonul 'steam login'")
+                        self.log_steam_debug(account_name, "login_button_missing", {
+                            "retry_attempt": retry_attempt,
+                            "current_url": page.url
+                        })
                         return False
                     
                     # Click pe butonul de login
@@ -465,15 +546,29 @@ class CasehugBotNodriver:
                         print(f"   📑 Găsite {len(all_tabs)} tab-uri deschise")
                         
                         steam_tab = None
+                        has_about_tab = False
+                        tab_urls = []
                         # Caută tab-ul cu Steam
                         for tab in all_tabs:
                             try:
-                                if 'steam' in tab.url.lower():
+                                tab_url = tab.url.lower()
+                                tab_urls.append(tab.url)
+                                if tab_url.startswith('about:'):
+                                    has_about_tab = True
+                                if 'steam' in tab_url:
                                     steam_tab = tab
                                     print(f"   ✓ Găsit tab Steam: {tab.url[:50]}...")
                                     break
                             except:
                                 continue
+
+                        self.log_steam_debug(account_name, "tabs_scan", {
+                            "retry_attempt": retry_attempt,
+                            "tabs_count": len(all_tabs),
+                            "has_about_tab": has_about_tab,
+                            "found_steam_tab": steam_tab is not None,
+                            "tab_urls": tab_urls[:10]
+                        })
                         
                         if steam_tab:
                             # Switch la tab-ul Steam
@@ -491,10 +586,58 @@ class CasehugBotNodriver:
                                 print(f"   ⏳ Nu am găsit butonul Sign In, aștept autentificare automată...")
                                 await asyncio.sleep(10)
                         else:
-                            print(f"   ⏳ Nu am găsit tab-ul Steam, aștept autentificare automată...")
-                            await asyncio.sleep(15)
+                            if has_about_tab:
+                                print(f"   ⚠️  Popup Steam a deschis tab temporar (about:*). Aștept și re-verific...")
+                                await asyncio.sleep(6)
+                                # Re-scan tabs după scurtă așteptare
+                                all_tabs_retry = page.browser.tabs
+                                for tab in all_tabs_retry:
+                                    try:
+                                        if 'steam' in tab.url.lower():
+                                            steam_tab = tab
+                                            print(f"   ✓ Găsit tab Steam la re-verificare: {tab.url[:50]}...")
+                                            break
+                                    except:
+                                        continue
+                                if steam_tab:
+                                    await steam_tab.activate()
+                                    await asyncio.sleep(2)
+                                    signin_button = await steam_tab.query_selector('input#imageLogin')
+                                    if signin_button:
+                                        await signin_button.click()
+                                        print(f"   ✓ Click pe 'Sign In' în popup Steam (retry)")
+                                        self.log_steam_debug(account_name, "steam_signin_clicked_retry", {
+                                            "retry_attempt": retry_attempt,
+                                            "steam_url": steam_tab.url
+                                        })
+                                        await asyncio.sleep(5)
+                                    else:
+                                        print(f"   ⏳ Nu am găsit butonul Sign In după re-verificare")
+                                        self.log_steam_debug(account_name, "steam_signin_button_missing_retry", {
+                                            "retry_attempt": retry_attempt,
+                                            "steam_url": steam_tab.url
+                                        })
+                                        await asyncio.sleep(10)
+                                else:
+                                    print(f"   ⏳ Încă nu găsesc tab-ul Steam, continui cu verificarea login...")
+                                    self.log_steam_debug(account_name, "steam_tab_missing_after_about", {
+                                        "retry_attempt": retry_attempt,
+                                        "current_url": page.url
+                                    })
+                                    await asyncio.sleep(10)
+                            else:
+                                print(f"   ⏳ Nu am găsit tab-ul Steam, aștept autentificare automată...")
+                                self.log_steam_debug(account_name, "steam_tab_missing", {
+                                    "retry_attempt": retry_attempt,
+                                    "current_url": page.url
+                                })
+                                await asyncio.sleep(15)
                     except Exception as e:
                         print(f"   ⚠️  Eroare switch tab Steam: {e}")
+                        self.log_steam_debug(account_name, "steam_tab_switch_error", {
+                            "retry_attempt": retry_attempt,
+                            "error": str(e)
+                        })
                         await asyncio.sleep(15)
                     
                     # Așteaptă redirect înapoi la CaseHug
@@ -510,6 +653,11 @@ class CasehugBotNodriver:
                     
                 except Exception as e:
                     print(f"   ❌ Eroare la auto-login: {e}")
+                    self.log_steam_debug(account_name, "auto_login_exception", {
+                        "retry_attempt": retry_attempt,
+                        "error": str(e),
+                        "current_url": (page.url if page else "")
+                    })
                     import traceback
                     traceback.print_exc()
                     return False
@@ -520,7 +668,35 @@ class CasehugBotNodriver:
                 has_balance_after = 'data-testid="header-account-balance"' in content
                 
                 if not has_balance_after:
-                    print(f"   ❌ Auto-login nu a reușit. Contul va fi sărit.")
+                    if retry_attempt < self.steam_login_max_retries:
+                        try:
+                            current_url = (page.url or '').lower()
+                        except:
+                            current_url = ''
+
+                        if current_url.startswith('about:') or 'steam' in current_url:
+                            print(f"   ⚠️  Detectat tab/pagină temporară ({current_url}). Reîncerc auto-login o singură dată...")
+                        else:
+                            print(f"   ⚠️  Auto-login nu a reușit. Reîncerc o singură dată...")
+
+                        self.log_steam_debug(account_name, "login_failed_retrying", {
+                            "retry_attempt": retry_attempt,
+                            "current_url": current_url
+                        })
+
+                        try:
+                            await page.get('https://casehug.com/free-cases')
+                            await asyncio.sleep(3)
+                        except:
+                            pass
+
+                        return await self.check_steam_login(page, account_name, retry_attempt + 1)
+
+                    print(f"   ❌ Auto-login nu a reușit după retry. Contul va fi sărit.")
+                    self.log_steam_debug(account_name, "login_failed_after_retry", {
+                        "retry_attempt": retry_attempt,
+                        "current_url": (page.url if page else "")
+                    })
                     return False
                 else:
                     # Extrage balanta
@@ -529,12 +705,27 @@ class CasehugBotNodriver:
                     if header_match:
                         balance = header_match.group(1)
                         print(f"   ✅ Auto-login reușit pentru {account_name}! (Balanță: {balance})")
+                        self.log_steam_debug(account_name, "auto_login_success", {
+                            "retry_attempt": retry_attempt,
+                            "balance": balance,
+                            "current_url": page.url
+                        })
                     else:
                         print(f"   ✅ Auto-login reușit pentru {account_name}!")
+                        self.log_steam_debug(account_name, "auto_login_success", {
+                            "retry_attempt": retry_attempt,
+                            "balance": None,
+                            "current_url": page.url
+                        })
                     return True
                 
         except Exception as e:
             print(f"   ⚠️  Eroare verificare login: {e}")
+            self.log_steam_debug(account_name, "check_exception", {
+                "retry_attempt": retry_attempt,
+                "error": str(e),
+                "current_url": (page.url if page else "")
+            })
             return True  # Continuăm oricum
     
     async def check_available_cases(self, page, account_name):
@@ -1169,22 +1360,27 @@ class CasehugBotNodriver:
                             
                             # Mapează culoarea la raritate și emoji
                             rarity_map = {
-                                "#A3A7BB": ("⚪", "Consumer/Industrial"),
-                                "#5E98D9": ("🔵", "Mil-Spec"),
-                                "#8847FF": ("🟣", "Restricted"),
-                                "#D32CE6": ("🟣", "Restricted"),  # Purple variations
-                                "#EB4B4B": ("🔴", "Covert"),
-                                "#E4AE39": ("🟡", "Classified"),
-                                "#F93AA6": ("🩷", "Classified"),  # Pink
-                                "#FFD700": ("🟡", "Contraband"),
+                                "#B0C3D9": ("⚪", "Consumer Grade"),  # Consumer - alb
+                                "#A3A7BB": ("⚪", "Consumer Grade"),  # Consumer variations
+                                "#5E98D9": ("🔵", "Industrial Grade"),  # Industrial - albastru deschis
+                                "#4B69FF": ("🔵", "Mil-Spec Grade"),  # Mil-Spec - albastru
+                                "#8847FF": ("🟣", "Restricted"),  # Restricted - mov
+                                "#D32CE6": ("🟣", "Restricted"),  # Restricted variations
+                                "#EB4B4B": ("🔴", "Classified"),  # Classified - roșu
+                                "#E4AE39": ("🟡", "Classified"),  # Classified variations
+                                "#F93AA6": ("🩷", "Classified"),  # Classified - roz
+                                "#FFD700": ("🟡", "Covert/Contraband"),  # Covert - auriu
                             }
                             
                             # Găsește cel mai apropiat match pentru culoare
                             rarity_emoji = "⚪"
-                            for color_code, (emoji, name) in rarity_map.items():
+                            for color_code, (emoji, grade_name) in rarity_map.items():
                                 if rarity_color.startswith(color_code[:4]):  # Match primele 4 caractere
                                     rarity_emoji = emoji
                                     break
+                            
+                            # Nu mai folosim fallback după preț.
+                            # Prețul nu este un indicator fiabil pentru raritate.
                             
                             skin_full_name = f"{weapon_name} | {skin_category}"
                             
