@@ -9,6 +9,7 @@ class HomePage:
         self.app = app
         self.content = None
         self.stats_row = None
+        self.activity_log = None
         
     def _load_stats_async(self):
         """Load stats in background thread"""
@@ -93,6 +94,31 @@ class HomePage:
             ],
             spacing=10,
         )
+
+        self.activity_log = ft.ListView(
+            spacing=4,
+            auto_scroll=True,
+            height=180,
+        )
+
+        activity_panel = ft.Card(
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("Live Activity", size=16, weight="bold"),
+                        ft.Text(
+                            "Runtime events from bot and Steam login sessions.",
+                            size=12,
+                            color="#8f8f8f",
+                        ),
+                        self.activity_log,
+                    ],
+                    spacing=8,
+                ),
+                padding=14,
+                bgcolor="#1a1a1a",
+            )
+        )
         
         self.content = ft.Column(
             [
@@ -102,6 +128,8 @@ class HomePage:
                 self.stats_row,
                 ft.Divider(height=20, color="transparent"),
                 quick_actions,
+                ft.Divider(height=10, color="transparent"),
+                activity_panel,
             ],
             spacing=15,
             alignment=ft.MainAxisAlignment.START,
@@ -118,7 +146,8 @@ class HomePage:
         # Load stats in background thread
         stats_thread = threading.Thread(target=self._load_stats_async, daemon=True)
         stats_thread.start()
-        
+        self.refresh_activity_log(update_page=False)
+
         return container
     
     def _create_stat_card(self, title: str, value: str, icon_name: str) -> ft.Card:
@@ -140,3 +169,40 @@ class HomePage:
                 bgcolor="#1a1a1a",
             ),
         )
+
+    def _event_color(self, level: str) -> str:
+        normalized = (level or "").lower()
+        if normalized in {"error", "failed", "fatal"}:
+            return "#ff8787"
+        if normalized in {"success", "started", "running"}:
+            return "#69db7c"
+        if normalized in {"warning", "stopped"}:
+            return "#fcc419"
+        return "#9ad1ff"
+
+    def refresh_activity_log(self, update_page: bool = True):
+        if not self.activity_log:
+            return
+
+        events = self.app.get_recent_events(25) if hasattr(self.app, "get_recent_events") else []
+        self.activity_log.controls.clear()
+
+        if not events:
+            self.activity_log.controls.append(
+                ft.Text("No activity yet.", size=12, color="#8f8f8f")
+            )
+        else:
+            for event in events:
+                timestamp = event.get("time", "--:--:--")
+                message = event.get("message", "")
+                level = event.get("level", "info")
+                self.activity_log.controls.append(
+                    ft.Text(
+                        f"[{timestamp}] {message}",
+                        size=12,
+                        color=self._event_color(level),
+                    )
+                )
+
+        if update_page and hasattr(self.app, "page") and self.app.page:
+            self.app.page.update()
