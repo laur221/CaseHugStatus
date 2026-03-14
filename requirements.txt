@@ -1,4 +1,15 @@
-nodriver
+flet==0.24.1
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.11
+qrcode==7.4.2
+pillow>=10.4.0
+nodriver==0.35
 requests==2.31.0
-2captcha-python==1.1.3
+beautifulsoup4==4.12.2
+aiohttp==3.9.1
+python-dotenv==1.0.0
+PyInstaller
 psutil==5.9.8
+2captcha-python==1.1.3
+selenium
+undetected-chromedriver

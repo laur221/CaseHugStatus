@@ -45,6 +45,9 @@ config.json
 last_opening.json
 schedule_config.json
 scheduler.lock
+casehugauto.db
+temp_qr_codes/
+bot_settings.json
 
 # Debug output
 debug_output/
@@ -53,7 +56,9 @@ debug_*.png
 
 # Logs
 *.log
+logs/*.png
 
 # OS
 .DS_Store
 Thumbs.db
+.env

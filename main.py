@@ -219,10 +219,12 @@ class CasehugBotNodriver:
         
         # Detect if running in Docker
         is_docker = os.environ.get('DISPLAY') == ':99' or os.environ.get('CHROME_BIN') is not None
-        headless_mode = is_docker  # Headless in Docker, visible on Windows
+        headless_mode = True  # Always headless mode (no GUI)
         
         if is_docker:
             print(f"   🐳 Docker detected - running in headless mode")
+        else:
+            print(f"   💻 Headless mode enabled - no GUI window")
         
         # Launch Nodriver browser with persistent profile
         # Nodriver solves Cloudflare automatically through DevTools Protocol
