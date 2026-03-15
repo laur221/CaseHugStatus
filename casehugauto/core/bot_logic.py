@@ -50,9 +50,24 @@ _JS_EXTRACT_NEW_DROPS = r"""
     const categoryEl = card.querySelector('[data-testid="your-drop-category"]');
     const category = textOf(categoryEl);
     const price = textOf(card.querySelector('[data-testid="your-drop-price"]'));
-    const caseSource = textOf(card.querySelector('[data-testid="your-drops-hover-date"]'));
+
+    const caseSourceEl = card.querySelector('[data-testid="your-drops-hover-date"]');
+    const caseSource = textOf(caseSourceEl);
+    const obtainedWrap = card.querySelector('[data-testid="your-drops-hover-is-drawn"]');
+    const obtainedTime = obtainedWrap && obtainedWrap.children && obtainedWrap.children.length > 1
+      ? textOf(obtainedWrap.children[1])
+      : "";
+    const obtainedDate = caseSourceEl && caseSourceEl.nextElementSibling
+      ? textOf(caseSourceEl.nextElementSibling)
+      : "";
+
     const condition = textOf(card.querySelector('[data-testid="your-drop-card-condition"]'));
     const image = card.querySelector('[data-testid="your-drop-skin-image"]');
+
+    const upgraderHref = card.querySelector('[data-testid="upgrader-button"]')?.getAttribute("href") || "";
+    const exchangeHref = card.querySelector('[data-testid="exchange-button"]')?.getAttribute("href") || "";
+    const hrefForItem = upgraderHref || exchangeHref || "";
+    const itemMatch = hrefForItem.match(/item=(\d+)/i);
 
     const cssColor = categoryEl ? toHex(getComputedStyle(categoryEl).color) : "";
     const gradStop = card.querySelector('linearGradient stop[offset="40%"]');
@@ -67,6 +82,9 @@ _JS_EXTRACT_NEW_DROPS = r"""
       condition: (condition || "").toUpperCase() || null,
       skin_image_url: image ? (image.currentSrc || image.src || "") : "",
       rarity_color: cssColor || gradientColor || "",
+      obtained_time: obtainedTime || "",
+      obtained_date: obtainedDate || "",
+      item_id: itemMatch ? itemMatch[1] : "",
     });
   }
 
@@ -518,12 +536,21 @@ class AutomationLogic:
                     skin_name = (r.get("skin") or "").strip()
                     case_source = (r.get("case") or "").strip().lower() or None
                     skin_value = self._parse_price(r.get("price", ""))
-                    signature = (
-                        self.account_id,
-                        skin_name.lower(),
-                        case_source or "",
-                        round(float(skin_value or 0.0), 4),
-                    )
+                    item_id = str(r.get("item_id") or "").strip()
+                    obtained_dt = r.get("obtained_date")
+                    if not isinstance(obtained_dt, datetime):
+                        obtained_dt = datetime.utcnow()
+
+                    if item_id:
+                        signature = (self.account_id, "item", item_id)
+                    else:
+                        signature = (
+                            self.account_id,
+                            skin_name.lower(),
+                            case_source or "",
+                            round(float(skin_value or 0.0), 4),
+                            obtained_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                        )
                     if signature in seen_signatures:
                         logger.info(
                             "Skipping duplicate skin in same extraction cycle: account=%s skin=%s case=%s price=%.4f",
@@ -552,6 +579,8 @@ class AutomationLogic:
                         )
                         continue
 
+                    rarity_label = str(r.get("rarity") or "").strip() or "Unknown"
+
                     total_value += skin_value
                     SkinCRUD.create(
                         self.db_session,
@@ -559,10 +588,10 @@ class AutomationLogic:
                         skin_name=skin_name,
                         estimated_price=skin_value,
                         case_source=case_source,
-                        rarity=r.get("rarity"),
+                        rarity=rarity_label,
                         condition=r.get("condition"),
                         skin_image_url=r.get("skin_image_url"),
-                        obtained_date=datetime.utcnow(),
+                        obtained_date=obtained_dt,
                     )
                     saved_skins_count += 1
                 except Exception as e:
@@ -1269,17 +1298,40 @@ class AutomationLogic:
             extracted = await self.page.evaluate(_JS_EXTRACT_NEW_DROPS)
             if isinstance(extracted, list) and extracted:
                 normalized = []
+                seen = set()
                 for item in extracted:
                     try:
-                        rarity = rarity_from_color(str(item.get("rarity_color") or "").strip() or None)
+                        case_source = str(item.get("case") or "unknown").strip().lower()
+                        skin_name = str(item.get("skin") or "").strip()
+                        price_text = str(item.get("price") or "").strip()
+                        item_id = str(item.get("item_id") or "").strip() or None
+                        obtained_dt = self._parse_obtained_datetime(
+                            str(item.get("obtained_date") or "").strip(),
+                            str(item.get("obtained_time") or "").strip(),
+                        )
+                        dedupe_key = item_id or "|".join(
+                            [
+                                case_source,
+                                skin_name,
+                                price_text,
+                                obtained_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            ]
+                        )
+                        if dedupe_key in seen:
+                            continue
+                        seen.add(dedupe_key)
+
+                        rarity = rarity_from_color(str(item.get("rarity_color") or "").strip() or None) or "Unknown"
                         normalized.append(
                             {
-                                "case": str(item.get("case") or "unknown").strip().lower(),
-                                "skin": str(item.get("skin") or "").strip(),
-                                "price": str(item.get("price") or "").strip(),
+                                "case": case_source,
+                                "skin": skin_name,
+                                "price": price_text,
                                 "rarity": rarity,
                                 "condition": str(item.get("condition") or "").strip().upper() or None,
                                 "skin_image_url": str(item.get("skin_image_url") or "").strip() or None,
+                                "item_id": item_id,
+                                "obtained_date": obtained_dt,
                             }
                         )
                     except Exception:
@@ -1313,8 +1365,19 @@ class AutomationLogic:
             cat_m = re.search(r'<div data-testid="your-drop-category"[^>]*>([^<]+)</div>', section)
             price_m = re.search(r'<span data-testid="your-drop-price"[^>]*>([^<]+)</span>', section)
             case_m = re.search(r'<div data-testid="your-drops-hover-date"[^>]*>([^<]+)</div>', section)
+            date_m = re.search(
+                r'data-testid="your-drops-hover-date"[^>]*>[^<]*</div>\s*<div>([^<]+)</div>',
+                section,
+                re.IGNORECASE | re.DOTALL,
+            )
+            time_m = re.search(
+                r'data-testid="your-drops-hover-is-drawn"[^>]*>\s*<div>[^<]*</div>\s*<div>([^<]+)</div>',
+                section,
+                re.IGNORECASE | re.DOTALL,
+            )
             cond_m = re.search(r'<div data-testid="your-drop-card-condition"[^>]*>([^<]+)</div>', section)
             img_m = re.search(r'<img[^>]+data-testid="your-drop-skin-image"[^>]+src="([^"]+)"', section)
+            item_m = re.search(r'(?:/upgrader\?item=|/skin-changer\?item=)(\d+)', section, re.IGNORECASE)
             rarity_color_m = re.search(
                 r'stop\s+offset="40%"\s+stop-color="(#[0-9A-Fa-f]{6})"',
                 section,
@@ -1323,15 +1386,33 @@ class AutomationLogic:
 
             if name_m and cat_m and price_m:
                 rarity_color = rarity_color_m.group(1).strip() if rarity_color_m else None
+                obtained_dt = AutomationLogic._parse_obtained_datetime(
+                    date_m.group(1).strip() if date_m else "",
+                    time_m.group(1).strip() if time_m else "",
+                )
                 skins.append({
                     "case": case_m.group(1).strip().lower() if case_m else "unknown",
                     "skin": f"{name_m.group(1).strip()} | {cat_m.group(1).strip()}",
                     "price": price_m.group(1).strip(),
-                    "rarity": rarity_from_color(rarity_color),
+                    "rarity": rarity_from_color(rarity_color) or "Unknown",
                     "condition": cond_m.group(1).strip().upper() if cond_m else None,
                     "skin_image_url": html.unescape(img_m.group(1).strip()) if img_m else None,
+                    "item_id": item_m.group(1).strip() if item_m else None,
+                    "obtained_date": obtained_dt,
                 })
         return skins
+
+    @staticmethod
+    def _parse_obtained_datetime(date_raw: str, time_raw: str) -> datetime:
+        date_raw = (date_raw or "").strip()
+        time_raw = (time_raw or "").strip()
+        if date_raw and time_raw:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    return datetime.strptime(f"{date_raw} {time_raw}", fmt)
+                except Exception:
+                    continue
+        return datetime.utcnow()
 
     @staticmethod
     def _parse_price(price_str: str) -> float:

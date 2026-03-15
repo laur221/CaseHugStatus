@@ -99,7 +99,7 @@ class SkinsPage:
                     continue
                 image_by_skin_name.setdefault(key, src)
             
-        self.skins_grid.controls.clear()
+            self.skins_grid.controls.clear()
             
             if not skins:
                 self.skins_grid.controls.append(
@@ -177,7 +177,6 @@ class SkinsPage:
                                 skin.skin_name,
                                 size=12,
                                 weight="bold",
-                                overflow=ft.TextOverflow.ELLIPSIS,
                             ),
                             padding=ft.padding.only(top=8, left=6, right=6),
                         ),
@@ -200,14 +199,13 @@ class SkinsPage:
                             size=10,
                             color="#888888",
                         ),
-                                ft.Text(
-                                    f"Account: {account_name}",
-                                    max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
-                                    height=24,
+                        ft.Text(
+                            f"Account: {account_name}",
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            height=24,
                             size=10,
                             color="#aaaaaa",
-                            overflow=ft.TextOverflow.ELLIPSIS,
                         ),
                     ],
                     spacing=5,

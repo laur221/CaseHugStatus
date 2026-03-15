@@ -234,7 +234,10 @@ class SkinCRUD:
             db.query(Skin)
             .options(joinedload(Skin.account))
             .filter(Skin.account_id == account_id)
-            .order_by(Skin.created_at.desc())
+            .order_by(
+                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
+                Skin.created_at.desc(),
+            )
             .all()
         )
 
@@ -244,17 +247,28 @@ class SkinCRUD:
         return (
             db.query(Skin)
             .options(joinedload(Skin.account))
-            .order_by(Skin.created_at.desc())
+            .order_by(
+                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
+                Skin.created_at.desc(),
+            )
             .all()
         )
     
     @staticmethod
     def get_new_skins(db: Session, account_id: int) -> List[Skin]:
         """Get new (not seen by user) skins"""
-        return db.query(Skin).filter(
-            Skin.account_id == account_id,
-            Skin.is_new == True
-        ).all()
+        return (
+            db.query(Skin)
+            .filter(
+                Skin.account_id == account_id,
+                Skin.is_new == True,
+            )
+            .order_by(
+                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
+                Skin.created_at.desc(),
+            )
+            .all()
+        )
     
     @staticmethod
     def get_by_rarity(db: Session, account_id: int, rarity: str) -> List[Skin]:
