@@ -18,6 +18,9 @@ class AccountStatsPage:
 
     def build(self) -> ft.Container:
         """Build account statistics page."""
+        # UI is rebuilt on each navigation; force first refresh to repopulate values.
+        self._last_snapshot = None
+
         header = ft.Row(
             [
                 ft.Text("Account Statistics", size=24, weight="bold"),

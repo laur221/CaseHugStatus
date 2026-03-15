@@ -93,6 +93,9 @@ class HomePage:
     
     def build(self) -> ft.Container:
         """Build home page - non-blocking"""
+        # UI is rebuilt on each navigation; force first refresh to repopulate cards.
+        self._stats_snapshot = None
+
         # Create stats cards with initial empty data
         self.stats_row = ft.Row(
             [
