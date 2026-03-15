@@ -50,15 +50,7 @@ _JS_EXTRACT_NEW_DROPS = r"""
     const categoryEl = card.querySelector('[data-testid="your-drop-category"]');
     const category = textOf(categoryEl);
     const price = textOf(card.querySelector('[data-testid="your-drop-price"]'));
-    const caseSourceEl = card.querySelector('[data-testid="your-drops-hover-date"]');
-    const caseSource = textOf(caseSourceEl);
-    const obtainedDate = caseSourceEl && caseSourceEl.nextElementSibling
-      ? textOf(caseSourceEl.nextElementSibling)
-      : "";
-    const obtainedWrap = card.querySelector('[data-testid="your-drops-hover-is-drawn"]');
-    const obtainedTime = obtainedWrap && obtainedWrap.children && obtainedWrap.children.length > 1
-      ? textOf(obtainedWrap.children[1])
-      : "";
+    const caseSource = textOf(card.querySelector('[data-testid="your-drops-hover-date"]'));
     const condition = textOf(card.querySelector('[data-testid="your-drop-card-condition"]'));
     const image = card.querySelector('[data-testid="your-drop-skin-image"]');
 
@@ -72,8 +64,6 @@ _JS_EXTRACT_NEW_DROPS = r"""
       case: (caseSource || "").toLowerCase() || "unknown",
       skin: `${name} | ${category}`.trim(),
       price: price,
-      obtained_date_raw: obtainedDate || "",
-      obtained_time_raw: obtainedTime || "",
       condition: (condition || "").toUpperCase() || null,
       skin_image_url: image ? (image.currentSrc || image.src || "") : "",
       rarity_color: cssColor || gradientColor || "",
@@ -572,7 +562,7 @@ class AutomationLogic:
                         rarity=r.get("rarity"),
                         condition=r.get("condition"),
                         skin_image_url=r.get("skin_image_url"),
-                        obtained_date=r.get("obtained_date") or datetime.utcnow(),
+                        obtained_date=datetime.utcnow(),
                     )
                     saved_skins_count += 1
                 except Exception as e:
@@ -1281,11 +1271,7 @@ class AutomationLogic:
                 normalized = []
                 for item in extracted:
                     try:
-                        rarity = rarity_from_color(str(item.get("rarity_color") or "").strip() or None) or "Unknown"
-                        obtained_date = self._parse_obtained_datetime(
-                            str(item.get("obtained_date_raw") or "").strip(),
-                            str(item.get("obtained_time_raw") or "").strip(),
-                        )
+                        rarity = rarity_from_color(str(item.get("rarity_color") or "").strip() or None)
                         normalized.append(
                             {
                                 "case": str(item.get("case") or "unknown").strip().lower(),
@@ -1294,7 +1280,6 @@ class AutomationLogic:
                                 "rarity": rarity,
                                 "condition": str(item.get("condition") or "").strip().upper() or None,
                                 "skin_image_url": str(item.get("skin_image_url") or "").strip() or None,
-                                "obtained_date": obtained_date,
                             }
                         )
                     except Exception:
@@ -1327,14 +1312,7 @@ class AutomationLogic:
             name_m = re.search(r'<div data-testid="your-drop-name"[^>]*>([^<]+)</div>', section)
             cat_m = re.search(r'<div data-testid="your-drop-category"[^>]*>([^<]+)</div>', section)
             price_m = re.search(r'<span data-testid="your-drop-price"[^>]*>([^<]+)</span>', section)
-            case_m = re.search(
-                r'<div data-testid="your-drops-hover-date"[^>]*>([^<]+)</div>\s*<div>([^<]+)</div>',
-                section,
-            )
-            obtained_time_m = re.search(
-                r'data-testid="your-drops-hover-is-drawn"[^>]*>\s*<div>[^<]*</div>\s*<div>([^<]+)</div>',
-                section,
-            )
+            case_m = re.search(r'<div data-testid="your-drops-hover-date"[^>]*>([^<]+)</div>', section)
             cond_m = re.search(r'<div data-testid="your-drop-card-condition"[^>]*>([^<]+)</div>', section)
             img_m = re.search(r'<img[^>]+data-testid="your-drop-skin-image"[^>]+src="([^"]+)"', section)
             rarity_color_m = re.search(
@@ -1345,31 +1323,15 @@ class AutomationLogic:
 
             if name_m and cat_m and price_m:
                 rarity_color = rarity_color_m.group(1).strip() if rarity_color_m else None
-                obtained_date = AutomationLogic._parse_obtained_datetime(
-                    case_m.group(2).strip() if case_m and len(case_m.groups()) > 1 else "",
-                    obtained_time_m.group(1).strip() if obtained_time_m else "",
-                )
                 skins.append({
                     "case": case_m.group(1).strip().lower() if case_m else "unknown",
                     "skin": f"{name_m.group(1).strip()} | {cat_m.group(1).strip()}",
                     "price": price_m.group(1).strip(),
-                    "rarity": rarity_from_color(rarity_color) or "Unknown",
+                    "rarity": rarity_from_color(rarity_color),
                     "condition": cond_m.group(1).strip().upper() if cond_m else None,
                     "skin_image_url": html.unescape(img_m.group(1).strip()) if img_m else None,
-                    "obtained_date": obtained_date,
                 })
         return skins
-
-    @staticmethod
-    def _parse_obtained_datetime(date_raw: str, time_raw: str):
-        date_text = (date_raw or "").strip()
-        time_text = (time_raw or "").strip()
-        if not date_text or not time_text:
-            return None
-        try:
-            return datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return None
 
     @staticmethod
     def _parse_price(price_str: str) -> float:

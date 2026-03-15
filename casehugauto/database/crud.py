@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from datetime import datetime, timedelta
 from ..models.models import Account, Skin, LoginSession, BotStatus
 from typing import List, Optional, Dict
@@ -230,75 +230,31 @@ class SkinCRUD:
     @staticmethod
     def get_by_account(db: Session, account_id: int) -> List[Skin]:
         """Get all skins for account"""
-        db.query(Skin).filter(
-            Skin.account_id == account_id,
-            Skin.obtained_date.is_(None),
-        ).update(
-            {Skin.obtained_date: Skin.created_at},
-            synchronize_session=False,
-        )
-        db.query(Skin).filter(
-            Skin.account_id == account_id,
-            or_(Skin.rarity.is_(None), func.trim(Skin.rarity) == ""),
-        ).update(
-            {Skin.rarity: "Unknown"},
-            synchronize_session=False,
-        )
-        db.commit()
-
         return (
             db.query(Skin)
             .options(joinedload(Skin.account))
             .filter(Skin.account_id == account_id)
-            .order_by(
-                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
-                Skin.created_at.desc(),
-            )
+            .order_by(Skin.created_at.desc())
             .all()
         )
 
     @staticmethod
     def get_all(db: Session) -> List[Skin]:
         """Get all skins from all accounts"""
-        db.query(Skin).filter(
-            Skin.obtained_date.is_(None),
-        ).update(
-            {Skin.obtained_date: Skin.created_at},
-            synchronize_session=False,
-        )
-        db.query(Skin).filter(
-            or_(Skin.rarity.is_(None), func.trim(Skin.rarity) == ""),
-        ).update(
-            {Skin.rarity: "Unknown"},
-            synchronize_session=False,
-        )
-        db.commit()
-
         return (
             db.query(Skin)
             .options(joinedload(Skin.account))
-            .order_by(
-                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
-                Skin.created_at.desc(),
-            )
+            .order_by(Skin.created_at.desc())
             .all()
         )
     
     @staticmethod
     def get_new_skins(db: Session, account_id: int) -> List[Skin]:
         """Get new (not seen by user) skins"""
-        return (
-            db.query(Skin)
-            .filter(
-                Skin.account_id == account_id,
-                Skin.is_new == True,
-            )
-            .order_by(
-                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
-                Skin.created_at.desc(),
-            )
-            .all()
-        )
+        return db.query(Skin).filter(
+            Skin.account_id == account_id,
+            Skin.is_new == True
+        ).all()
     
     @staticmethod
     def get_by_rarity(db: Session, account_id: int, rarity: str) -> List[Skin]:
