@@ -6,6 +6,7 @@ import time
 from .ui.pages.home import HomePage
 from .ui.pages.accounts import AccountsPage
 from .ui.pages.skins import SkinsPage
+from .ui.pages.account_stats import AccountStatsPage
 from .ui.pages.settings import SettingsPage
 from .database.db import init_db
 from .core.bot_runner import bot_runner
@@ -37,6 +38,7 @@ class CaseHugAutoApp:
         self.skins_page = None
         self.home_page = None
         self.settings_page = None
+        self.account_stats_page = None
         self.activity_events = []
         self._ui_event_queue = SimpleQueue()
         self._ui_event_pump_started = False
@@ -51,6 +53,7 @@ class CaseHugAutoApp:
         self.home_page = HomePage(self)
         self.accounts_page = AccountsPage(self)
         self.skins_page = SkinsPage(self)
+        self.account_stats_page = AccountStatsPage(self)
         self.settings_page = SettingsPage(self)
 
     def add_activity(self, message: str, level: str = "info"):
@@ -70,10 +73,12 @@ class CaseHugAutoApp:
 
     def _register_bot_status_callback(self):
         def _on_bot_status(payload):
-            account_id = payload.get("account_id", "?")
+            account_name = (payload.get("account_name") or "").strip()
+            if not account_name:
+                account_name = str(payload.get("account_id", "?"))
             message = payload.get("message", "")
             status = payload.get("status", "info")
-            self.add_activity(f"Bot[{account_id}] {message}", status)
+            self.add_activity(f"Bot[{account_name}] {message}", status)
 
         bot_runner.set_status_callback(_on_bot_status)
 
@@ -152,6 +157,8 @@ class CaseHugAutoApp:
             self.show_page(self.accounts_page)
         elif page_name == "skins":
             self.show_page(self.skins_page)
+        elif page_name == "account_stats":
+            self.show_page(self.account_stats_page)
         elif page_name == "settings":
             self.show_page(self.settings_page)
     
@@ -212,13 +219,18 @@ class CaseHugAutoApp:
                     selected_icon=ft.icons.INVENTORY,
                 ),
                 ft.NavigationRailDestination(
+                    icon=ft.icons.INSIGHTS,
+                    label="Stats",
+                    selected_icon=ft.icons.INSIGHTS,
+                ),
+                ft.NavigationRailDestination(
                     icon=ft.icons.SETTINGS,
                     label="Settings",
                     selected_icon=ft.icons.SETTINGS,
                 ),
             ],
             on_change=lambda e: self.navigate_to(
-                ["home", "accounts", "skins", "settings"][e.control.selected_index]
+                ["home", "accounts", "skins", "account_stats", "settings"][e.control.selected_index]
             ),
             bgcolor="#1e1e1e",
         )

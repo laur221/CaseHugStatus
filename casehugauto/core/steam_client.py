@@ -84,18 +84,18 @@ class SteamClient:
         Extract Steam profile information from cookies
         """
         try:
-            # Setează cookies în sesiune
+            # Set session cookies.
             for key, value in cookies.items():
                 self.session.cookies.set(key, value)
             
-            # Obține informații de profil
+            # Retrieve profile information.
             response = self.session.get(f"{STEAM_API_BASE}/api/IPlayer/GetProfile/v1", 
                                        params={"access_token": cookies.get("sessionid", "")})
             
             if response.status_code == 200:
                 profile_data = response.json()
                 
-                # Parsează datele de profil
+                # Parse profile data.
                 return {
                     "steam_id": profile_data.get("steamid", ""),
                     "steam_nickname": profile_data.get("personaname", ""),
@@ -105,14 +105,14 @@ class SteamClient:
             
             logger.warning("Failed to extract Steam profile, trying alternative method...")
             
-            # Metodă alternativă - parsare din HTML
+            # Alternative method: parse HTML.
             response = self.session.get(f"{STEAM_API_BASE}/my/profile")
             if response.status_code == 200:
-                # Extrage Steam ID din URL-ul profilului
+                # Extract Steam ID from profile URL.
                 steam_id = self._extract_steam_id_from_html(response.text)
                 
                 if steam_id:
-                    # Obține detalii publice ale profilului
+                    # Fetch public profile details.
                     profile_response = self.session.get(
                         f"{STEAM_API_BASE}/profiles/{steam_id}",
                         params={"xml": 1}
@@ -158,7 +158,7 @@ class SteamClient:
             import sqlite3
             from pathlib import Path
             
-            # Căutare în Chrome cookies
+            # Search Chrome cookies.
             chrome_cookie_path = Path.home() / "AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cookies"
             
             if chrome_cookie_path.exists():
@@ -175,7 +175,7 @@ class SteamClient:
             import sqlite3
             import shutil
             
-            # Fă o copie pentru a evita lock-uri
+            # Create a copy to avoid DB lock issues.
             temp_path = "/tmp/chrome_cookies.db"
             shutil.copy(cookie_path, temp_path)
             
@@ -204,15 +204,15 @@ class SteamClient:
         Login to casehug.com using Steam cookies
         """
         try:
-            # Setează Steam cookies
+            # Set Steam cookies.
             for key, value in steam_cookies.items():
                 self.session.cookies.set(key, value)
             
-            # Navighează la pagina de login a casehug
+            # Open CaseHug login page.
             response = self.session.get(f"{CASEHUG_BASE}/login")
             
             if response.status_code == 200:
-                # Încearcă login cu Steam
+                # Attempt Steam login.
                 login_response = self.session.post(
                     f"{CASEHUG_BASE}/api/auth/steam",
                     json={"method": "steam_login"},
@@ -222,7 +222,7 @@ class SteamClient:
                 if login_response.status_code == 200:
                     result = login_response.json()
                     if result.get("success"):
-                        # Returnează cookies după login reușit
+                        # Return cookies after successful login.
                         return dict(self.session.cookies)
             
             logger.warning("Failed to login to casehug with Steam")

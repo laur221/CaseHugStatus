@@ -85,14 +85,17 @@ class SettingsPage:
     def _show_bot_settings(self):
         """Show bot settings dialog"""
         current_cfg = bot_runner.get_config()
+        interval_seconds = int(current_cfg.get("case_open_interval_seconds", 60) or 60)
+        interval_minutes = max(1, int(round(interval_seconds / 60)))
 
         auto_start_cb = ft.Checkbox(
             label="Auto-run bot for new accounts",
             value=current_cfg.get("auto_start_new_accounts", False),
         )
         interval_field = ft.TextField(
-            label="Heartbeat interval (seconds)",
-            value=str(current_cfg.get("case_open_interval_seconds", 60)),
+            label="Cooldown check interval (minutes)",
+            value=str(interval_minutes),
+            hint_text="Example: 10 = 10 minutes",
         )
         retries_field = ft.TextField(
             label="Max retries",
@@ -100,10 +103,16 @@ class SettingsPage:
         )
 
         def save_settings(_):
+            try:
+                minutes_value = int(float(str(interval_field.value or "").strip()))
+            except Exception:
+                minutes_value = 1
+            minutes_value = max(1, minutes_value)
+
             ok, message = bot_runner.update_config(
                 {
                     "auto_start_new_accounts": bool(auto_start_cb.value),
-                    "case_open_interval_seconds": interval_field.value,
+                    "case_open_interval_seconds": minutes_value * 60,
                     "max_retries": retries_field.value,
                 }
             )

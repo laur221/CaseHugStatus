@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import io
 import logging
 from pathlib import Path
+import shutil
 import threading
 import time
 from uuid import uuid4
@@ -46,14 +47,13 @@ class SteamLoginQRDialog:
         self.status_text = None
         self.monitor_ring = None
         self.monitor_text = None
-        self._step_icons = {}
-        self._step_texts = {}
         self.qr_image = None
         self.detected_account_text = None
         self.username_input = None
         self.password_input = None
         self._session_ref = f"add_{int(time.time() * 1000)}"
         self._qr_preview_path = ""
+        self._session_profile_path = ""
         self._detected_account_name = ""
         self._steam_ok = False
         self._steam_profile = {}
@@ -73,23 +73,23 @@ class SteamLoginQRDialog:
     def show(self):
         self._cleanup_stale_log_images(max_age_hours=12)
         self.status_text = ft.Text(
-            "Pornim sesiunea de login Steam...",
+            "Starting Steam login session...",
             size=12,
             color="#888888",
         )
         self.monitor_ring = ft.ProgressRing(width=14, height=14, value=None, color="#00d4ff")
-        self.monitor_text = ft.Text("Stare: inițializare...", size=12, color="#00d4ff")
+        self.monitor_text = ft.Text("Status: initializing...", size=12, color="#00d4ff")
         self.detected_account_text = ft.Text(
-            "Cont detectat: -",
+            "Detected account: -",
             size=12,
             color="#aaaaaa",
         )
         self.username_input = ft.TextField(
-            label="Steam Username sau Email (opțional)",
+            label="Steam Username or Email (optional)",
             width=420,
         )
         self.password_input = ft.TextField(
-            label="Steam Password (nu se salvează)",
+            label="Steam Password (not stored)",
             password=True,
             can_reveal_password=True,
             width=420,
@@ -114,7 +114,7 @@ class SteamLoginQRDialog:
         qr_panel = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Logare prin QR", size=12, color="#88aaff"),
+                    ft.Text("Sign in with QR", size=12, color="#88aaff"),
                     self.qr_image,
                 ],
                 spacing=10,
@@ -126,10 +126,9 @@ class SteamLoginQRDialog:
             bgcolor="#11151d",
             alignment=ft.alignment.top_center,
         )
-        progress_panel = self._build_progress_panel()
 
         self.dialog = ft.AlertDialog(
-            title=ft.Text("Adăugare Cont Steam"),
+            title=ft.Text("Add Steam Account"),
             content=ft.Column(
                 [
                     self.status_text,
@@ -150,18 +149,17 @@ class SteamLoginQRDialog:
                         vertical_alignment=ft.CrossAxisAlignment.START,
                         wrap=False,
                     ),
-                    progress_panel,
                 ],
                 spacing=12,
                 width=840,
                 scroll=ft.ScrollMode.AUTO,
             ),
             actions=[
-                ft.TextButton("Actualizează QR", on_click=self._refresh_qr),
-                ft.TextButton("Trimite Datele", on_click=self._submit_credentials),
-                ft.TextButton("Verifică Login", on_click=self._check_steam_login),
-                ft.TextButton("Salvează Contul", on_click=self._save_account),
-                ft.TextButton("Anulează", on_click=self._cancel),
+                ft.TextButton("Refresh QR", on_click=self._refresh_qr),
+                ft.TextButton("Submit Credentials", on_click=self._submit_credentials),
+                ft.TextButton("Check Login", on_click=self._check_steam_login),
+                ft.TextButton("Save Account", on_click=self._save_account),
+                ft.TextButton("Cancel", on_click=self._cancel),
             ],
             modal=True,
         )
@@ -169,7 +167,7 @@ class SteamLoginQRDialog:
         self._page().dialog = self.dialog
         self.dialog.open = True
         self._page().update()
-        self._publish_activity("Dialog deschis. Pregătim sesiunea Steam...", "info")
+        self._publish_activity("Dialog opened. Preparing Steam session...", "info")
         self._start_headless_session()
         self._start_auth_monitor()
 
@@ -191,75 +189,9 @@ class SteamLoginQRDialog:
         }
         return color_map.get((status or "").lower(), "#888888")
 
-    def _build_progress_panel(self) -> ft.Container:
-        self._step_icons = {}
-        self._step_texts = {}
-
-        step_defs = [
-            ("browser", "1. Pornim browserul Steam"),
-            ("qr", "2. Afișăm codul QR"),
-            ("approve", "3. Așteptăm confirmarea în aplicația Steam"),
-            ("save", "4. Salvăm contul"),
-        ]
-
-        rows = []
-        for key, label in step_defs:
-            icon = ft.Icon(ft.icons.RADIO_BUTTON_UNCHECKED, size=16, color="#6f7785")
-            text = ft.Text(label, size=12, color="#9aa2b1")
-            self._step_icons[key] = icon
-            self._step_texts[key] = text
-            rows.append(
-                ft.Row(
-                    [icon, text],
-                    spacing=8,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
-            )
-
-        return ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text("Progres Login", size=12, color="#8f8f8f"),
-                    ft.Text(
-                        "Scanează QR din aplicația Steam și aprobă loginul pe telefon.",
-                        size=11,
-                        color="#6f7785",
-                    ),
-                    ft.Column(rows, spacing=6),
-                ],
-                spacing=8,
-            ),
-            padding=10,
-            border_radius=8,
-            bgcolor="#171b22",
-        )
-
-    def _set_step_state(self, step_key: str, state: str):
-        icon = self._step_icons.get(step_key)
-        text = self._step_texts.get(step_key)
-        if not icon or not text:
-            return
-
-        if state == "active":
-            icon.name = ft.icons.HOURGLASS_TOP
-            icon.color = "#00d4ff"
-            text.color = "#d7ebff"
-        elif state == "done":
-            icon.name = ft.icons.CHECK_CIRCLE
-            icon.color = "#51cf66"
-            text.color = "#a8f0b8"
-        elif state == "error":
-            icon.name = ft.icons.ERROR
-            icon.color = "#ff6b6b"
-            text.color = "#ffb3b3"
-        else:
-            icon.name = ft.icons.RADIO_BUTTON_UNCHECKED
-            icon.color = "#6f7785"
-            text.color = "#9aa2b1"
-
     def _set_monitor_state(self, message: str, status: str = "info", busy: bool = True):
         if self.monitor_text:
-            self.monitor_text.value = f"Stare: {message}"
+            self.monitor_text.value = f"Status: {message}"
             self.monitor_text.color = self._status_color(status)
         if self.monitor_ring:
             self.monitor_ring.visible = busy
@@ -267,14 +199,13 @@ class SteamLoginQRDialog:
 
     def _publish_activity(self, message: str, status: str = "info"):
         if hasattr(self.app, "add_activity"):
-            self.app.add_activity(f"Adăugare cont Steam: {message}", status)
+            self.app.add_activity(f"Steam add-account: {message}", status)
 
     def _start_headless_session(self):
         if self._busy:
             return
         self._busy = True
-        self._set_step_state("browser", "active")
-        self._set_monitor_state("pornim browserul...", "info", busy=True)
+        self._set_monitor_state("starting browser...", "info", busy=True)
 
         try:
             logger.info(
@@ -282,23 +213,25 @@ class SteamLoginQRDialog:
                 self._session_ref,
             )
 
-            ok, msg = steam_login_launcher.start_steam_headless(self._session_ref, "")
+            session_profile_path = self._prepare_session_profile_path()
+            ok, msg = steam_login_launcher.start_steam_headless(
+                self._session_ref,
+                session_profile_path,
+            )
             if not ok:
-                self._set_step_state("browser", "error")
-                self._set_monitor_state("nu am putut porni browserul", "error", busy=False)
+                self._set_monitor_state("failed to start browser", "error", busy=False)
                 self._set_status(msg, "error")
+                self._cleanup_session_profile()
                 return
 
-            self._set_step_state("browser", "done")
-            self._set_step_state("qr", "active")
-            self._set_monitor_state("browser pornit, pregătim codul QR...", "info", busy=True)
-            self._set_status("Browser pornit. Încărcăm codul QR...", "info")
+            self._set_monitor_state("browser started, loading QR...", "info", busy=True)
+            self._set_status("Browser started. Loading QR code...", "info")
             self._fetch_qr(timeout_seconds=25)
         except Exception as exc:
             logger.error("Failed to start headless Steam session: %s", exc, exc_info=True)
-            self._set_step_state("browser", "error")
-            self._set_monitor_state("pornirea sesiunii a eșuat", "error", busy=False)
-            self._set_status(f"Nu am putut porni sesiunea Steam: {exc}", "error")
+            self._set_monitor_state("session start failed", "error", busy=False)
+            self._set_status(f"Could not start Steam session: {exc}", "error")
+            self._cleanup_session_profile()
         finally:
             self._busy = False
 
@@ -310,7 +243,7 @@ class SteamLoginQRDialog:
         self._auth_monitor_stop.clear()
         self._monitor_attempts = 0
         logger.info("Steam auth monitor started: session_ref=%s", self._session_ref)
-        self._set_monitor_state("așteptăm confirmarea în Steam...", "info", busy=True)
+        self._set_monitor_state("waiting for Steam confirmation...", "info", busy=True)
 
         async def monitor():
             try:
@@ -330,7 +263,7 @@ class SteamLoginQRDialog:
                     )
                     if self._monitor_attempts % 2 == 0:
                         self._set_monitor_state(
-                            "așteptăm confirmarea în aplicația Steam...",
+                            "waiting for approval in Steam app...",
                             "info",
                             busy=True,
                         )
@@ -353,20 +286,17 @@ class SteamLoginQRDialog:
 
                     self._steam_ok = True
                     self._steam_profile = profile
-                    self._set_step_state("approve", "done")
-                    self._set_step_state("save", "active")
-                    self._set_monitor_state("login detectat, salvăm contul...", "success", busy=False)
+                    self._set_monitor_state("login detected, saving account...", "success", busy=True)
                     self._detected_account_name = self._build_unique_account_name(
                         profile.get("steam_nickname") or ""
                     )
-                    self.detected_account_text.value = f"Cont detectat: {self._detected_account_name}"
-                    self._set_status("Login detectat. Salvăm contul automat...", "success")
+                    self.detected_account_text.value = f"Detected account: {self._detected_account_name}"
+                    self._set_status("Login detected. Saving account automatically...", "success")
                     self._save_account(None, auto_trigger=True)
                     break
             except Exception as exc:
                 logger.warning("Steam auth monitor stopped with error: %s", exc, exc_info=True)
-                self._set_step_state("approve", "error")
-                self._set_monitor_state("monitorul s-a oprit cu eroare", "error", busy=False)
+                self._set_monitor_state("monitor stopped with error", "error", busy=False)
             finally:
                 logger.info(
                     "Steam auth monitor stopped: session_ref=%s enabled=%s dialog_open=%s",
@@ -375,8 +305,7 @@ class SteamLoginQRDialog:
                     bool(self.dialog and self.dialog.open),
                 )
                 if not self._steam_ok and self.dialog and self.dialog.open:
-                    self._set_step_state("approve", "error")
-                    self._set_monitor_state("nu a fost detectat loginul încă", "warning", busy=False)
+                    self._set_monitor_state("login not detected yet", "warning", busy=True)
 
         self._page().run_task(monitor)
 
@@ -430,19 +359,16 @@ class SteamLoginQRDialog:
                 timeout_seconds,
                 msg,
             )
-            self._set_step_state("qr", "error")
-            self._set_monitor_state("codul QR nu este disponibil încă", "warning", busy=True)
+            self._set_monitor_state("QR is not available yet", "warning", busy=False)
             self._set_status(msg, "error")
             return
 
         status_message = (
-            "Cod QR actualizat. Scanează acum din aplicația Steam sau folosește datele de login."
+            "QR updated. Scan with the Steam app now, or use credentials below."
             if "snapshot" not in (msg or "").lower()
-            else "Pagina Steam s-a încărcat. Apasă 'Actualizează QR' dacă nu vezi codul."
+            else "Steam page snapshot loaded. Press 'Refresh QR' if code is not visible yet."
         )
-        self._set_step_state("qr", "done")
-        self._set_step_state("approve", "active")
-        self._set_monitor_state("codul QR e gata, așteptăm aprobarea...", "info", busy=True)
+        self._set_monitor_state("QR ready. Waiting for Steam approval...", "info", busy=True)
         self._apply_qr_image(image_base64, status_message)
 
     def _refresh_qr(self, _):
@@ -452,11 +378,10 @@ class SteamLoginQRDialog:
         username = (self.username_input.value or "").strip()
         password = self.password_input.value or ""
         if not username or not password:
-            self._set_status("Completează username și parola Steam.", "error")
+            self._set_status("Enter Steam username and password first.", "error")
             return
 
-        self._set_step_state("approve", "active")
-        self._set_monitor_state("trimitem datele de login...", "info", busy=True)
+        self._set_monitor_state("submitting credentials...", "info", busy=True)
         ok, msg = steam_login_launcher.submit_credentials(
             session_ref=self._session_ref,
             steam_username=username,
@@ -469,10 +394,9 @@ class SteamLoginQRDialog:
             ok,
         )
         if ok:
-            self._set_monitor_state("datele au fost trimise, așteptăm confirmarea...", "info", busy=True)
+            self._set_monitor_state("credentials submitted, waiting for Steam approval...", "info", busy=True)
         else:
-            self._set_step_state("approve", "error")
-            self._set_monitor_state("nu am putut trimite datele", "error", busy=False)
+            self._set_monitor_state("could not submit credentials", "error", busy=False)
         self._set_status(msg, "success" if ok else "error")
         self._page().update()
 
@@ -485,50 +409,43 @@ class SteamLoginQRDialog:
                 self._session_ref,
                 msg,
             )
-            self._set_step_state("approve", "active")
-            self._set_monitor_state("loginul nu este confirmat încă", "warning", busy=True)
+            self._set_monitor_state("login not confirmed yet", "warning", busy=True)
             self._set_status(msg, "error")
             return
 
         ok_profile, msg_profile, profile = steam_login_launcher.get_steam_profile(self._session_ref)
         if not ok_profile:
-            self._set_step_state("approve", "error")
-            self._set_monitor_state("nu am putut citi profilul Steam", "error", busy=False)
+            self._set_monitor_state("could not read Steam profile", "error", busy=False)
             self._set_status(msg_profile, "error")
             return
 
         self._steam_profile = profile
         self._detected_account_name = self._build_unique_account_name(profile.get("steam_nickname") or "")
-        self.detected_account_text.value = f"Cont detectat: {self._detected_account_name}"
-        self._set_step_state("approve", "done")
-        self._set_step_state("save", "active")
-        self._set_monitor_state("login confirmat", "success", busy=False)
+        self.detected_account_text.value = f"Detected account: {self._detected_account_name}"
+        self._set_monitor_state("login confirmed", "success", busy=False)
         logger.info(
             "Steam profile detected for add-account session: session_ref=%s steam_id=%s nickname=%s",
             self._session_ref,
             profile.get("steam_id", ""),
             profile.get("steam_nickname", ""),
         )
-        self._set_status("Login confirmat. Numele contului a fost preluat automat.", "success")
+        self._set_status("Login confirmed. Account name loaded automatically.", "success")
         self._page().update()
 
     def _save_account(self, _, auto_trigger: bool = False):
         if self._saving:
             return
         self._saving = True
-        self._set_step_state("save", "active")
-        self._set_monitor_state("salvăm contul...", "info", busy=True)
+        self._set_monitor_state("saving account...", "info", busy=True)
         account_name = (self._detected_account_name or "").strip()
         if not account_name:
-            self._set_step_state("save", "error")
-            self._set_monitor_state("nu putem salva: contul nu e detectat", "error", busy=False)
-            self._set_status("Contul nu a fost detectat încă. Apasă 'Verifică Login'.", "error")
+            self._set_monitor_state("cannot save: account not detected", "error", busy=False)
+            self._set_status("Account was not detected yet. Press 'Check Login' first.", "error")
             self._saving = False
             return
         if not self._steam_ok:
-            self._set_step_state("save", "error")
-            self._set_monitor_state("nu putem salva: loginul nu e confirmat", "error", busy=False)
-            self._set_status("Loginul Steam nu este confirmat. Apasă 'Verifică Login'.", "error")
+            self._set_monitor_state("cannot save: login not confirmed", "error", busy=False)
+            self._set_status("Steam login is not confirmed. Press 'Check Login' first.", "error")
             self._saving = False
             return
 
@@ -540,6 +457,7 @@ class SteamLoginQRDialog:
             steam_login_launcher.close(self._session_ref)
 
             final_profile_path = ensure_profile_path(account_name)
+            self._move_session_profile_to_final(final_profile_path)
             logger.info(
                 "Creating final profile for account save: session_ref=%s account=%s final_profile=%s",
                 self._session_ref,
@@ -555,6 +473,7 @@ class SteamLoginQRDialog:
                     steam_username=self._steam_profile.get("steam_username"),
                     steam_id=self._steam_profile.get("steam_id"),
                     steam_nickname=self._steam_profile.get("steam_nickname") or account_name,
+                    steam_avatar_url=self._steam_profile.get("steam_avatar_url"),
                     cookies=self._steam_profile.get("cookies"),
                 )
 
@@ -567,6 +486,8 @@ class SteamLoginQRDialog:
                 account.steam_nickname = self._steam_profile.get("steam_nickname")
             if self._steam_profile.get("steam_username"):
                 account.steam_username = self._steam_profile.get("steam_username")
+            if self._steam_profile.get("steam_avatar_url"):
+                account.steam_avatar_url = self._steam_profile.get("steam_avatar_url")
             if self._steam_profile.get("cookies"):
                 account.cookies = self._steam_profile.get("cookies")
             db.commit()
@@ -577,10 +498,9 @@ class SteamLoginQRDialog:
                 account.id,
                 account.account_name,
             )
-            self._set_step_state("save", "done")
-            self._set_monitor_state("cont salvat cu succes", "success", busy=False)
+            self._set_monitor_state("account saved successfully", "success", busy=False)
             self._set_status(
-                "Cont salvat automat." if auto_trigger else "Cont salvat.",
+                "Account saved automatically." if auto_trigger else "Account saved.",
                 "success",
             )
 
@@ -592,9 +512,8 @@ class SteamLoginQRDialog:
             self._cleanup_current_preview()
         except Exception as exc:
             logger.error("Could not save account after Steam login: %s", exc, exc_info=True)
-            self._set_step_state("save", "error")
-            self._set_monitor_state("salvarea a eșuat", "error", busy=False)
-            self._set_status(f"Nu am putut salva contul: {exc}", "error")
+            self._set_monitor_state("save failed", "error", busy=False)
+            self._set_status(f"Could not save account: {exc}", "error")
             db.rollback()
         finally:
             db.close()
@@ -604,11 +523,73 @@ class SteamLoginQRDialog:
         self._auth_monitor_enabled = False
         self._auth_monitor_stop.set()
         steam_login_launcher.close(self._session_ref)
-        self._set_monitor_state("sesiune anulată", "stopped", busy=False)
+        self._set_monitor_state("session cancelled", "stopped", busy=False)
+        self._cleanup_session_profile()
         self._cleanup_current_preview()
         logger.info("Steam add-account session canceled: session_ref=%s", self._session_ref)
         self.dialog.open = False
         self._page().update()
+
+    def _prepare_session_profile_path(self) -> str:
+        pending_root = Path("profiles") / "_pending_add"
+        pending_root.mkdir(parents=True, exist_ok=True)
+        profile_path = pending_root / self._session_ref
+        profile_path.mkdir(parents=True, exist_ok=True)
+        self._session_profile_path = str(profile_path.resolve())
+        return self._session_profile_path
+
+    def _move_session_profile_to_final(self, final_profile_path: str):
+        src_path = Path((self._session_profile_path or "").strip())
+        if not src_path.exists():
+            return
+
+        dest_path = Path(final_profile_path).resolve()
+        if src_path.resolve() == dest_path:
+            return
+
+        try:
+            dest_path.mkdir(parents=True, exist_ok=True)
+            destination_has_files = any(dest_path.iterdir())
+
+            if not destination_has_files:
+                shutil.rmtree(dest_path, ignore_errors=True)
+                shutil.move(str(src_path), str(dest_path))
+            else:
+                for item in src_path.iterdir():
+                    target = dest_path / item.name
+                    if item.is_dir():
+                        shutil.copytree(item, target, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(item, target)
+                shutil.rmtree(src_path, ignore_errors=True)
+
+            self._session_profile_path = str(dest_path)
+            logger.info(
+                "Session profile moved into final account profile: session_ref=%s final_profile=%s",
+                self._session_ref,
+                dest_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not move session profile to final account profile: session_ref=%s src=%s dst=%s error=%s",
+                self._session_ref,
+                src_path,
+                dest_path,
+                exc,
+                exc_info=True,
+            )
+
+    def _cleanup_session_profile(self):
+        src_path = Path((self._session_profile_path or "").strip())
+        if not src_path.exists():
+            self._session_profile_path = ""
+            return
+        try:
+            shutil.rmtree(src_path, ignore_errors=True)
+        except Exception:
+            logger.debug("Could not remove pending session profile: %s", src_path, exc_info=True)
+        finally:
+            self._session_profile_path = ""
 
     def _cleanup_current_preview(self):
         preview_path = (self._qr_preview_path or "").strip()

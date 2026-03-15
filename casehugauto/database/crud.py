@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 from ..models.models import Account, Skin, LoginSession, BotStatus
 from typing import List, Optional, Dict
@@ -188,6 +189,38 @@ class SkinCRUD:
         db.commit()
         db.refresh(skin)
         return skin
+
+    @staticmethod
+    def find_recent_duplicate(
+        db: Session,
+        account_id: int,
+        skin_name: str,
+        case_source: Optional[str],
+        estimated_price: Optional[float],
+        window_minutes: int = 20,
+    ) -> Optional[Skin]:
+        """Find a very recent duplicate drop with same account/name/case/price."""
+        cutoff = datetime.utcnow() - timedelta(minutes=max(1, int(window_minutes)))
+        query = db.query(Skin).filter(
+            Skin.account_id == account_id,
+            Skin.skin_name == skin_name,
+            Skin.created_at >= cutoff,
+        )
+
+        if case_source is None:
+            query = query.filter(Skin.case_source.is_(None))
+        else:
+            query = query.filter(Skin.case_source == case_source)
+
+        if estimated_price is None:
+            query = query.filter(Skin.estimated_price.is_(None))
+        else:
+            # Float-safe comparison in SQL.
+            query = query.filter(
+                func.abs(func.coalesce(Skin.estimated_price, 0.0) - float(estimated_price)) < 0.0001
+            )
+
+        return query.order_by(Skin.created_at.desc()).first()
     
     @staticmethod
     def get_by_id(db: Session, skin_id: int) -> Optional[Skin]:
@@ -197,15 +230,75 @@ class SkinCRUD:
     @staticmethod
     def get_by_account(db: Session, account_id: int) -> List[Skin]:
         """Get all skins for account"""
-        return db.query(Skin).filter(Skin.account_id == account_id).all()
+        db.query(Skin).filter(
+            Skin.account_id == account_id,
+            Skin.obtained_date.is_(None),
+        ).update(
+            {Skin.obtained_date: Skin.created_at},
+            synchronize_session=False,
+        )
+        db.query(Skin).filter(
+            Skin.account_id == account_id,
+            or_(Skin.rarity.is_(None), func.trim(Skin.rarity) == ""),
+        ).update(
+            {Skin.rarity: "Unknown"},
+            synchronize_session=False,
+        )
+        db.commit()
+
+        return (
+            db.query(Skin)
+            .options(joinedload(Skin.account))
+            .filter(Skin.account_id == account_id)
+            .order_by(
+                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
+                Skin.created_at.desc(),
+            )
+            .all()
+        )
+
+    @staticmethod
+    def get_all(db: Session) -> List[Skin]:
+        """Get all skins from all accounts"""
+        db.query(Skin).filter(
+            Skin.obtained_date.is_(None),
+        ).update(
+            {Skin.obtained_date: Skin.created_at},
+            synchronize_session=False,
+        )
+        db.query(Skin).filter(
+            or_(Skin.rarity.is_(None), func.trim(Skin.rarity) == ""),
+        ).update(
+            {Skin.rarity: "Unknown"},
+            synchronize_session=False,
+        )
+        db.commit()
+
+        return (
+            db.query(Skin)
+            .options(joinedload(Skin.account))
+            .order_by(
+                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
+                Skin.created_at.desc(),
+            )
+            .all()
+        )
     
     @staticmethod
     def get_new_skins(db: Session, account_id: int) -> List[Skin]:
         """Get new (not seen by user) skins"""
-        return db.query(Skin).filter(
-            Skin.account_id == account_id,
-            Skin.is_new == True
-        ).all()
+        return (
+            db.query(Skin)
+            .filter(
+                Skin.account_id == account_id,
+                Skin.is_new == True,
+            )
+            .order_by(
+                func.coalesce(Skin.obtained_date, Skin.created_at).desc(),
+                Skin.created_at.desc(),
+            )
+            .all()
+        )
     
     @staticmethod
     def get_by_rarity(db: Session, account_id: int, rarity: str) -> List[Skin]:
@@ -332,15 +425,55 @@ class BotStatusCRUD:
         db.commit()
         db.refresh(bot_status)
         return bot_status
+
+    @staticmethod
+    def record_case_check(db: Session, account_id: int) -> BotStatus:
+        """Store timestamp of the latest cooldown check for this account."""
+        bot_status = BotStatusCRUD.get_or_create(db, account_id)
+        bot_status.last_case_check_at = datetime.utcnow()
+        db.commit()
+        db.refresh(bot_status)
+        return bot_status
+
+    @staticmethod
+    def record_cases_opened_at(db: Session, account_id: int) -> BotStatus:
+        """Store timestamp when at least one case was opened for this account."""
+        bot_status = BotStatusCRUD.get_or_create(db, account_id)
+        bot_status.last_cases_opened_at = datetime.utcnow()
+        db.commit()
+        db.refresh(bot_status)
+        return bot_status
+
+    @staticmethod
+    def schedule_next_check(db: Session, account_id: int, seconds_from_now: int) -> BotStatus:
+        """Persist next cooldown-check timestamp for this account."""
+        bot_status = BotStatusCRUD.get_or_create(db, account_id)
+        delay = max(1, int(seconds_from_now))
+        bot_status.next_scheduled_run = datetime.utcnow() + timedelta(seconds=delay)
+        db.commit()
+        db.refresh(bot_status)
+        return bot_status
+
+    @staticmethod
+    def clear_next_check(db: Session, account_id: int) -> BotStatus:
+        """Clear scheduled next check timestamp for this account."""
+        bot_status = BotStatusCRUD.get_or_create(db, account_id)
+        bot_status.next_scheduled_run = None
+        db.commit()
+        db.refresh(bot_status)
+        return bot_status
     
     @staticmethod
     def record_execution(db: Session, account_id: int, cases_opened: int, skins_obtained: int, total_value: float):
         """Record bot execution results"""
         bot_status = BotStatusCRUD.get_or_create(db, account_id)
-        bot_status.last_run = datetime.utcnow()
+        now = datetime.utcnow()
+        bot_status.last_run = now
         bot_status.cases_opened_total += cases_opened
         bot_status.skins_obtained += skins_obtained
         bot_status.total_value_obtained += total_value
+        if int(cases_opened or 0) > 0:
+            bot_status.last_cases_opened_at = now
         db.commit()
         db.refresh(bot_status)
         return bot_status

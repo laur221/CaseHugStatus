@@ -176,7 +176,7 @@ def configure_database(database_url: str | None = None) -> str:
 
 
 def get_db():
-    """Dependency injection pentru database session"""
+    """Dependency injection helper for database sessions."""
     db = SessionLocal()
     try:
         yield db
@@ -189,6 +189,23 @@ def _sync_schema():
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
 
+    if "skins" in tables:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE skins "
+                    "SET obtained_date = created_at "
+                    "WHERE obtained_date IS NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE skins "
+                    "SET rarity = 'Unknown' "
+                    "WHERE rarity IS NULL OR BTRIM(rarity) = ''"
+                )
+            )
+
     if "accounts" in tables:
         account_columns = {column["name"] for column in inspector.get_columns("accounts")}
         if "browser_profile_path" not in account_columns:
@@ -197,6 +214,21 @@ def _sync_schema():
                     text("ALTER TABLE accounts ADD COLUMN browser_profile_path VARCHAR(500)")
                 )
             logger.info("Added accounts.browser_profile_path column.")
+
+    if "bot_status" in tables:
+        bot_columns = {column["name"] for column in inspector.get_columns("bot_status")}
+        if "last_case_check_at" not in bot_columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE bot_status ADD COLUMN last_case_check_at TIMESTAMP")
+                )
+            logger.info("Added bot_status.last_case_check_at column.")
+        if "last_cases_opened_at" not in bot_columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE bot_status ADD COLUMN last_cases_opened_at TIMESTAMP")
+                )
+            logger.info("Added bot_status.last_cases_opened_at column.")
 
 
 def _backfill_account_profile_paths():
@@ -247,7 +279,7 @@ def drop_db():
 
 
 class DatabaseConnection:
-    """Context manager pentru database connections"""
+    """Context manager for database connections."""
     def __init__(self):
         self.session = None
     

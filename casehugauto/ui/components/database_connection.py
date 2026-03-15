@@ -119,7 +119,7 @@ class DatabaseConnectionDialog:
             prefix_icon=ft.icons.LOCK,
         )
         status_text = ft.Text(
-            "Introduce detaliile PostgreSQL. Baza de date va fi creata automat daca lipseste.",
+            "Enter PostgreSQL details. The database will be created automatically if it is missing.",
             size=12,
             color="#888888",
         )
@@ -128,7 +128,7 @@ class DatabaseConnectionDialog:
             self.connecting = True
             page = self.app.main_area.page
             try:
-                status_text.value = "Se verifica conexiunea PostgreSQL..."
+                status_text.value = "Checking PostgreSQL connection..."
                 status_text.color = "#ffaa00"
                 page.update()
 
@@ -149,14 +149,14 @@ class DatabaseConnectionDialog:
 
                 created = ensure_database_exists(connection_url)
                 if not init_db(connection_url):
-                    raise RuntimeError("Aplicatia nu a putut initializa tabelele PostgreSQL.")
+                    raise RuntimeError("The application could not initialize PostgreSQL tables.")
 
                 self._save_connection_details(connection_url)
 
                 status_text.value = (
-                    "Conexiune reusita. Baza de date a fost creata automat."
+                    "Connection successful. The database was created automatically."
                     if created
-                    else "Conexiune reusita."
+                    else "Connection successful."
                 )
                 status_text.color = "#00d4ff"
                 page.update()
@@ -168,7 +168,7 @@ class DatabaseConnectionDialog:
                 self.dialog.open = False
                 page.update()
             except Exception as exc:
-                status_text.value = f"Eroare conexiune: {str(exc)[:120]}"
+                status_text.value = f"Connection error: {str(exc)[:120]}"
                 status_text.color = "red"
                 logger.error("Database connection failed: %s", exc, exc_info=True)
                 page.update()
@@ -196,7 +196,7 @@ class DatabaseConnectionDialog:
                 status_text,
                 ft.Container(height=10),
                 ft.Text(
-                    "Aplicatia foloseste doar PostgreSQL. Nu este necesara creare manuala a bazei daca utilizatorul are drepturile necesare.",
+                    "This application uses PostgreSQL only. Manual database creation is not required when the user has sufficient privileges.",
                     size=11,
                     color="#666666",
                 ),
@@ -291,21 +291,21 @@ class DatabaseSettingsPage:
                             [
                                 ft.Text("PostgreSQL only", weight="bold", size=12),
                                 ft.Text(
-                                    "CaseHugAuto foloseste exclusiv PostgreSQL pentru stocarea conturilor, skin-urilor si statisticilor.",
+                                    "CaseHugAuto uses PostgreSQL exclusively for storing accounts, skins, and statistics.",
                                     size=11,
                                     color="#888888",
                                 ),
                                 ft.Container(height=10),
-                                ft.Text("Creare automata", weight="bold", size=12),
+                                ft.Text("Automatic creation", weight="bold", size=12),
                                 ft.Text(
-                                    "Daca baza specificata nu exista, aplicatia incearca sa o creeze automat folosind aceleasi credentiale.",
+                                    "If the specified database does not exist, the app attempts to create it automatically using the same credentials.",
                                     size=11,
                                     color="#888888",
                                 ),
                                 ft.Container(height=10),
-                                ft.Text("Conexiune curenta", weight="bold", size=12),
+                                ft.Text("Current connection", weight="bold", size=12),
                                 ft.Text(
-                                    "Cardul de mai sus se actualizeaza imediat dupa o conectare reusita, fara restart al aplicatiei.",
+                                    "The card above updates immediately after a successful connection, without restarting the application.",
                                     size=11,
                                     color="#888888",
                                 ),

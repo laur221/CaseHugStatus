@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -73,6 +74,8 @@ class SteamLoginLauncher:
                 if run_in_background:
                     options.add_argument("--headless=new")
                     options.add_argument("--window-size=1920,1080")
+                    options.add_argument("--window-position=-32000,-32000")
+                    options.add_argument("--disable-gpu")
                 else:
                     options.add_argument("--start-maximized")
                 driver = self._create_driver(options)
@@ -132,6 +135,8 @@ class SteamLoginLauncher:
                 self._apply_common_chrome_options(options)
                 options.add_argument("--headless=new")
                 options.add_argument("--window-size=1920,1080")
+                options.add_argument("--window-position=-32000,-32000")
+                options.add_argument("--disable-gpu")
                 driver = self._create_driver(options)
                 self._drivers[key] = driver
             except Exception as exc:
@@ -329,7 +334,8 @@ class SteamLoginLauncher:
             driver.get("https://steamcommunity.com/my")
             time.sleep(1)
 
-            current = (driver.current_url or "").lower()
+            current_url = driver.current_url or ""
+            current = current_url.lower()
             if "login" in current:
                 return False, "Steam session is not authenticated yet.", {}
 
@@ -345,6 +351,10 @@ class SteamLoginLauncher:
             if steam_cookie:
                 decoded = urllib.parse.unquote(steam_cookie)
                 steam_id = decoded.split("||", 1)[0].strip()
+            if not steam_id:
+                m = re.search(r"/profiles/(\d+)", current_url, re.IGNORECASE)
+                if m:
+                    steam_id = m.group(1).strip()
 
             nickname = ""
             nickname_selectors = [
@@ -375,19 +385,37 @@ class SteamLoginLauncher:
             if not nickname and steam_id:
                 nickname = f"steam_{steam_id}"
 
+            steam_avatar_url = ""
+            avatar_selectors = [
+                (By.CSS_SELECTOR, "#global_header .playerAvatarAutoSizeInner img", "src"),
+                (By.CSS_SELECTOR, "#global_header .playerAvatar img", "src"),
+                (By.CSS_SELECTOR, ".playerAvatarAutoSizeInner img", "src"),
+                (By.CSS_SELECTOR, "meta[property='og:image']", "content"),
+            ]
+            for by, selector, attr in avatar_selectors:
+                try:
+                    value = (driver.find_element(by, selector).get_attribute(attr) or "").strip()
+                    if value:
+                        steam_avatar_url = value
+                        break
+                except Exception:
+                    continue
+
             if not nickname:
                 return False, "Could not read Steam profile name from session.", {}
 
             logger.info(
-                "Steam profile extracted: session_ref=%s steam_id=%s nickname=%s",
+                "Steam profile extracted: session_ref=%s steam_id=%s nickname=%s avatar=%s",
                 self._key(session_ref),
                 steam_id,
                 nickname,
+                "yes" if steam_avatar_url else "no",
             )
             return True, "Steam profile detected.", {
                 "steam_id": steam_id,
                 "steam_nickname": nickname,
                 "steam_username": nickname,
+                "steam_avatar_url": steam_avatar_url,
                 "cookies": parsed_cookies,
             }
         except Exception as exc:

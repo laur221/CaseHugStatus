@@ -49,7 +49,7 @@ class SteamLoginDialog:
             db.close()
 
         self.status_text = ft.Text(
-            "Start login browser, approve Steam Guard if needed, then confirm session.",
+            "Start hidden login session, approve Steam Guard if needed, then confirm session.",
             size=12,
             color="#888888",
         )
@@ -65,12 +65,14 @@ class SteamLoginDialog:
             width=420,
         )
         self.use_qr_checkbox = ft.Checkbox(
-            label="Use Steam QR login instead of password submit",
+            label="Use Steam QR login instead of password submit (disabled in hidden mode)",
             value=False,
+            disabled=True,
         )
         self.background_checkbox = ft.Checkbox(
-            label="Run browser in background (no visible window)",
-            value=False,
+            label="Background mode is always enabled (no visible window)",
+            value=True,
+            disabled=True,
         )
 
         profile_path = self.account.browser_profile_path or ""
@@ -80,14 +82,11 @@ class SteamLoginDialog:
                 return
             username = (self.username_field.value or "").strip()
             password = self.password_field.value or ""
-            prefer_qr = bool(self.use_qr_checkbox.value)
-            run_in_background = bool(self.background_checkbox.value)
+            prefer_qr = False
+            run_in_background = True
 
-            if prefer_qr and run_in_background:
-                self._set_status("QR mode requires a visible browser window.", "error")
-                return
-            if not prefer_qr and (not username or not password):
-                self._set_status("Username and password are required unless QR mode is selected.", "error")
+            if not username or not password:
+                self._set_status("Username and password are required.", "error")
                 return
 
             self._is_busy = True
@@ -231,4 +230,3 @@ class SteamLoginDialog:
         }
         self.status_text.value = message
         self.status_text.color = color_map.get(status, "#888888")
-

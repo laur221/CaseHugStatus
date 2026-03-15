@@ -101,6 +101,8 @@ class BotStatus(Base):
     status = Column(String(50), default="stopped")  # running, stopped, completed, error
     last_run = Column(DateTime, nullable=True)
     next_scheduled_run = Column(DateTime, nullable=True)
+    last_case_check_at = Column(DateTime, nullable=True)
+    last_cases_opened_at = Column(DateTime, nullable=True)
     
     # Execution stats
     cases_opened_total = Column(Integer, default=0)

@@ -15,7 +15,6 @@ class ProfileImporter:
     """Helper class to scan and import existing profiles from profiles/ folder"""
     
     PROFILES_FOLDER = "profiles"
-    IGNORED_PREFIXES = ("_", "diag_", "session_", "temp_")
     
     @staticmethod
     def get_profiles_folder() -> Optional[Path]:
@@ -44,9 +43,6 @@ class ProfileImporter:
         try:
             for item in profiles_folder.iterdir():
                 if item.is_dir():
-                    name_lower = item.name.lower()
-                    if any(name_lower.startswith(prefix) for prefix in ProfileImporter.IGNORED_PREFIXES):
-                        continue
                     discovered.append({
                         'name': item.name,
                         'path': str(item)

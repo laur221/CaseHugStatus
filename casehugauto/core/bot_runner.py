@@ -11,7 +11,7 @@ Website automation and anti-bot bypass logic are NOT implemented here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
@@ -25,6 +25,8 @@ from .bot_logic import AutomationLogic
 
 logger = logging.getLogger(__name__)
 
+CASE_COOLDOWN_HOURS = 24
+
 
 
 class BotConfig(TypedDict):
@@ -35,6 +37,7 @@ class BotConfig(TypedDict):
 
 class StatusPayload(TypedDict):
     account_id: int
+    account_name: str
     message: str
     status: str
     timestamp: str
@@ -71,16 +74,24 @@ class BotRunner:
     def set_status_callback(self, callback: StatusCallback):
         self._status_callback = callback
 
-    def _emit_status(self, account_id: int, message: str, status: str = "info"):
+    def _emit_status(
+        self,
+        account_id: int,
+        message: str,
+        status: str = "info",
+        account_name: str | None = None,
+    ):
+        label = (account_name or "").strip() or str(account_id)
         payload: StatusPayload = {
             "account_id": account_id,
+            "account_name": label,
             "message": message,
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if self._status_callback:
             self._status_callback(payload)
-        logger.info(f"[BOT:{account_id}][{status.upper()}] {message}")
+        logger.info(f"[BOT:{label}][{status.upper()}] {message}")
 
     def _load_config(self) -> BotConfig:
         if not CONFIG_PATH.exists():
@@ -168,8 +179,8 @@ class BotRunner:
                 "on",
             }
 
-        if interval < 5:
-            return False, "Interval must be at least 5 seconds."
+        if interval < 60:
+            return False, "Interval must be at least 1 minute."
         if retries < 1:
             return False, "Max retries must be at least 1."
 
@@ -247,16 +258,22 @@ class BotRunner:
     # -------------------- worker --------------------
     def _account_worker(self, account_id: int, stop_event: threading.Event):
         db = SessionLocal()
-        reached_error_limit = False
         max_retries = int(self._config.get("max_retries", 3))
         interval_seconds = int(self._config.get("case_open_interval_seconds", 60))
+        interval_minutes = max(1, int(round(interval_seconds / 60)))
         retry_count = 0
+        worker_account_name: str | None = None
+        automation = None
 
         try:
             account = AccountCRUD.get_by_id(db, account_id)
             if not account:
                 self._emit_status(account_id, "Account not found.", "error")
                 return
+            worker_account_name = (account.account_name or "").strip() or None
+
+            def _status_cb(aid: int, message: str, status: str = "info"):
+                self._emit_status(aid, message, status, account_name=worker_account_name)
 
             BotStatusCRUD.update_status(db, account_id, "running")
             BotStatusCRUD.get_or_create(db, account_id)
@@ -265,18 +282,120 @@ class BotRunner:
             )
             db.commit()
 
-            self._emit_status(account_id, f"Worker started for {account.account_name}.", "started")
+            _status_cb(account_id, f"Worker started for {account.account_name}.", "started")
+            _status_cb(
+                account_id,
+                (
+                    f"Auto-loop enabled. Fallback check interval: {interval_minutes} minute(s). "
+                    f"After case opening, next run waits {CASE_COOLDOWN_HOURS}h."
+                ),
+                "info",
+            )
 
-            # Initialize and run the automation logic
-            automation = AutomationLogic(db, account_id, stop_event, self._emit_status)
-            automation.run()
+            # Continuous polling loop: keep checking/opening when cooldown ends.
+            while not stop_event.is_set():
+                try:
+                    bot_status = BotStatusCRUD.get_or_create(db, account_id)
+                    now_utc = datetime.utcnow()
 
-            # The rest of the loop is handled within AutomationLogic.
-            # This part will be reached after the bot stops or fails.
-            if stop_event.is_set():
-                 self._emit_status(account_id, "Worker stopped.", "stopped")
-            else:
-                 self._emit_status(account_id, "Worker finished unexpectedly.", "error")
+                    if bot_status.last_cases_opened_at:
+                        cooldown_due_at = bot_status.last_cases_opened_at + timedelta(
+                            hours=CASE_COOLDOWN_HOURS
+                        )
+                        if cooldown_due_at > now_utc:
+                            existing_due = bot_status.next_scheduled_run
+                            if (
+                                existing_due is None
+                                or abs((existing_due - cooldown_due_at).total_seconds()) > 1.0
+                            ):
+                                bot_status.next_scheduled_run = cooldown_due_at
+                                db.commit()
+                                db.refresh(bot_status)
+
+                    wait_until = bot_status.next_scheduled_run
+                    if wait_until and wait_until > now_utc:
+                        wait_seconds = max(1, int((wait_until - now_utc).total_seconds()))
+                        due_label = wait_until.strftime("%Y-%m-%d %H:%M:%S UTC")
+                        _status_cb(
+                            account_id,
+                            f"Cooldown active. Next run at {due_label}.",
+                            "info",
+                        )
+                        if stop_event.wait(wait_seconds):
+                            _status_cb(account_id, "Worker stopped.", "stopped")
+                            break
+                except Exception as exc:
+                    logger.debug(
+                        "Could not evaluate cooldown schedule for account %s: %s",
+                        account_id,
+                        exc,
+                    )
+
+                automation = AutomationLogic(db, account_id, stop_event, _status_cb)
+                automation.run()
+                cycle_status = getattr(automation, "last_result_status", "unknown")
+
+                if stop_event.is_set() or cycle_status == "stopped":
+                    _status_cb(account_id, "Worker stopped.", "stopped")
+                    break
+
+                if cycle_status == "completed":
+                    retry_count = 0
+                    opened_cases_count = int(
+                        getattr(automation, "last_opened_cases_count", 0) or 0
+                    )
+                    try:
+                        if opened_cases_count > 0:
+                            BotStatusCRUD.schedule_next_check(
+                                db,
+                                account_id,
+                                CASE_COOLDOWN_HOURS * 3600,
+                            )
+                        else:
+                            BotStatusCRUD.schedule_next_check(db, account_id, interval_seconds)
+                    except Exception as exc:
+                        logger.debug(
+                            "Could not persist next_scheduled_run for account %s: %s",
+                            account_id,
+                            exc,
+                        )
+                    if opened_cases_count > 0:
+                        _status_cb(
+                            account_id,
+                            (
+                                f"Opened {opened_cases_count} case(s). "
+                                f"Next run in {CASE_COOLDOWN_HOURS}h."
+                            ),
+                            "success",
+                        )
+                    else:
+                        _status_cb(
+                            account_id,
+                            f"Cycle completed. Rechecking in {interval_minutes} minute(s)...",
+                            "info",
+                        )
+                else:
+                    retry_count += 1
+                    try:
+                        BotStatusCRUD.schedule_next_check(db, account_id, interval_seconds)
+                    except Exception as exc:
+                        logger.debug(
+                            "Could not persist next_scheduled_run for failed cycle account %s: %s",
+                            account_id,
+                            exc,
+                        )
+                    _status_cb(
+                        account_id,
+                        f"Cycle failed (status={cycle_status}, retry {retry_count}/{max_retries}).",
+                        "warning",
+                    )
+                    if retry_count >= max_retries:
+                        _status_cb(
+                            account_id,
+                            "Maximum retries reached. Worker stopped.",
+                            "error",
+                        )
+                        break
                  
         except Exception as exc:
             db.rollback()
@@ -285,12 +404,24 @@ class BotRunner:
                 BotStatusCRUD.set_error(db, account_id, str(exc))
             except Exception:
                 pass
-            self._emit_status(account_id, f"Fatal worker error: {exc}", "error")
+            self._emit_status(
+                account_id,
+                f"Fatal worker error: {exc}",
+                "error",
+                account_name=worker_account_name,
+            )
         finally:
             # Final status update
-            final_status = "stopped" if stop_event.is_set() else "error"
+            if stop_event.is_set():
+                final_status = "stopped"
+            elif automation and getattr(automation, "last_result_status", "") == "completed":
+                final_status = "completed"
+            else:
+                final_status = "error"
             try:
                 BotStatusCRUD.update_status(db, account_id, final_status)
+                if final_status in {"stopped", "error"}:
+                    BotStatusCRUD.clear_next_check(db, account_id)
             except Exception:
                 pass
 

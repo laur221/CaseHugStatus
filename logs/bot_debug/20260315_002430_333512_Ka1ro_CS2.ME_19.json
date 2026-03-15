@@ -1,0 +1,18 @@
+{
+  "reason": "Steam login was not confirmed on CaseHug.",
+  "account_id": 19,
+  "account_name": "Ka1ro CS2.ME",
+  "timestamp_utc": "2026-03-15T00:24:32.075820",
+  "url": "https://steamcommunity.com/profiles/76561199178228713/",
+  "tabs": [
+    {
+      "index": 0,
+      "url": "https://steamcommunity.com/profiles/76561199178228713/"
+    }
+  ],
+  "html_saved": true,
+  "html_path": "D:\\github\\CasehugAuto\\logs\\bot_debug\\20260315_002430_333512_Ka1ro_CS2.ME_19.html",
+  "screenshot_saved": true,
+  "screenshot_path": "D:\\github\\CasehugAuto\\logs\\bot_debug\\20260315_002430_333512_Ka1ro_CS2.ME_19.png",
+  "screenshot_error": ""
+}

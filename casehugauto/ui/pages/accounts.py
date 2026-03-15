@@ -1,8 +1,11 @@
 import flet as ft
 import logging
+import threading
+import time
+from sqlalchemy import func
 from ...database.db import SessionLocal
-from ...database.crud import AccountCRUD, SkinCRUD, BotStatusCRUD
-from ..components.steam_login_dialog import SteamLoginDialog
+from ...database.crud import AccountCRUD
+from ...models.models import BotStatus, Skin
 from ..components.steam_login_qr_dialog import SteamLoginQRDialog
 from ...core.bot_runner import bot_runner
 
@@ -14,7 +17,7 @@ class AccountsPage:
         self.app = app
         self.content = None
         self.accounts_list = None
-        self.steam_login_dialog = None
+        self._refresh_loop_started = False
         
     def build(self) -> ft.Container:
         """Build accounts page"""
@@ -22,11 +25,6 @@ class AccountsPage:
             [
                 ft.Text("Accounts", size=24, weight="bold"),
                 ft.Row([
-                    ft.ElevatedButton(
-                        "Import Profiles",
-                        icon="cloud_download",
-                        on_click=self._import_profiles,
-                    ),
                     ft.ElevatedButton(
                         "Add Account",
                         icon="add",
@@ -55,83 +53,147 @@ class AccountsPage:
 
         # Populate list only after controls are initialized.
         self.refresh_accounts()
+        self._start_refresh_loop()
         
         return ft.Container(
             content=self.content,
             expand=True,
             padding=10,
         )
+
+    def _start_refresh_loop(self):
+        """Refresh account cards periodically while this page is visible."""
+        if self._refresh_loop_started:
+            return
+        self._refresh_loop_started = True
+
+        def _loop():
+            while True:
+                try:
+                    if getattr(self.app, "current_page", None) == self:
+                        self.refresh_accounts()
+                except Exception:
+                    pass
+                time.sleep(2.5)
+
+        threading.Thread(target=_loop, daemon=True).start()
     
     def refresh_accounts(self):
         """Refresh accounts list"""
-        if not self.accounts_list:
-            return
-
         db = SessionLocal()
         try:
             accounts = AccountCRUD.get_all(db)
-            self.accounts_list.controls.clear()
 
-            if not accounts:
-                self.accounts_list.controls.append(
-                    ft.Container(
-                        content=ft.Text(
-                            "No accounts yet. Add one to get started!",
-                            size=14,
-                            color="#888888",
-                        ),
-                        padding=20,
-                        alignment=ft.alignment.center,
-                    )
+            skin_rows = (
+                db.query(
+                    Skin.account_id,
+                    func.count(Skin.id).label("skins_count"),
+                    func.coalesce(func.sum(Skin.estimated_price), 0.0).label("total_value"),
                 )
-            else:
-                rendered = 0
-                for account in accounts:
-                    try:
-                        self.accounts_list.controls.append(self._create_account_card(account, db))
-                        rendered += 1
-                    except Exception as exc:
-                        logger.error(
-                            "Could not render account card for account_id=%s: %s",
-                            getattr(account, "id", "unknown"),
-                            exc,
-                            exc_info=True,
-                        )
+                .group_by(Skin.account_id)
+                .all()
+            )
+            skin_stats = {
+                row.account_id: {
+                    "skins_count": int(row.skins_count or 0),
+                    "total_value": float(row.total_value or 0.0),
+                }
+                for row in skin_rows
+            }
+            skin_preview_rows = (
+                db.query(Skin.account_id, Skin.skin_image_url)
+                .filter(Skin.skin_image_url.isnot(None))
+                .order_by(Skin.obtained_date.desc().nullslast(), Skin.created_at.desc(), Skin.id.desc())
+                .all()
+            )
+            skin_preview_map = {}
+            for row in skin_preview_rows:
+                account_id = int(row.account_id or 0)
+                image_url = str(row.skin_image_url or "").strip()
+                if account_id <= 0 or not image_url:
+                    continue
+                if account_id in skin_preview_map:
+                    continue
+                skin_preview_map[account_id] = image_url
 
-                if rendered == 0:
+            status_rows = db.query(BotStatus).all()
+            status_map = {row.account_id: row for row in status_rows if row.account_id is not None}
+            
+            if self.accounts_list:
+                self.accounts_list.controls.clear()
+                
+                if not accounts:
                     self.accounts_list.controls.append(
                         ft.Container(
                             content=ft.Text(
-                                "Accounts exist in database, but rendering failed. Check logs.",
+                                "No accounts yet. Add one to get started!",
                                 size=14,
-                                color="#ff6b6b",
+                                color="#888888",
                             ),
                             padding=20,
                             alignment=ft.alignment.center,
                         )
                     )
-
-            # Only update if control is already on page
-            try:
-                if hasattr(self.accounts_list, "page") and self.accounts_list.page:
-                    self.accounts_list.update()
-            except Exception as e:
-                logger.debug(f"Could not update accounts list: {e}")
+                else:
+                    for account in accounts:
+                        self.accounts_list.controls.append(
+                            self._create_account_card(account, skin_stats, status_map, skin_preview_map)
+                        )
+                
+                # Only update if control is already on page
+                try:
+                    if hasattr(self.accounts_list, 'page') and self.accounts_list.page:
+                        self.accounts_list.update()
+                except Exception as e:
+                    logger.debug(f"Could not update accounts list: {e}")
         
         finally:
             db.close()
     
-    def _create_account_card(self, account, db) -> ft.Card:
+    def _create_account_card(self, account, skin_stats: dict, status_map: dict, skin_preview_map: dict) -> ft.Card:
         """Create account card"""
-        bot_status = BotStatusCRUD.get_or_create(db, account.id)
-        skins_count = len(SkinCRUD.get_by_account(db, account.id))
+        stats = skin_stats.get(account.id, {"skins_count": 0, "total_value": 0.0})
+        skins_count = int(stats["skins_count"])
+        total_value = float(stats["total_value"])
+        bot_status = status_map.get(account.id)
+        cases_opened_total = int(getattr(bot_status, "cases_opened_total", 0) or 0)
+        last_check = getattr(bot_status, "last_case_check_at", None)
+        last_open = getattr(bot_status, "last_cases_opened_at", None)
         is_running = bot_runner.is_running(account.id)
+
+        def _fmt_ts(value):
+            if not value:
+                return "-"
+            try:
+                return value.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return str(value)
         
-        avatar = ft.CircleAvatar(
-            foreground_image_src=account.steam_avatar_url if account.steam_avatar_url else None,
-            radius=40,
-            bgcolor="#333",
-        )
+        avatar_src = str((account.steam_avatar_url or "").strip() or (skin_preview_map.get(account.id) or "")).strip()
+        account_initial = ((account.account_name or "?").strip()[:1] or "?").upper()
+        if avatar_src:
+            avatar = ft.Container(
+                width=84,
+                height=84,
+                border_radius=12,
+                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                bgcolor="#222831",
+                content=ft.Image(
+                    src=avatar_src,
+                    fit=ft.ImageFit.CONTAIN,
+                    width=84,
+                    height=84,
+                ),
+            )
+        else:
+            avatar = ft.Container(
+                width=84,
+                height=84,
+                border_radius=42,
+                bgcolor="#2b3240",
+                alignment=ft.alignment.center,
+                content=ft.Text(account_initial, color="white", weight="bold", size=24),
+            )
         
         account_info = ft.Column(
             [
@@ -144,7 +206,12 @@ class AccountsPage:
                     overflow=ft.TextOverflow.ELLIPSIS,
                 ),
                 ft.Text(
-                    f"Skins: {skins_count} | Cases: {bot_status.cases_opened_total} | Value: ${bot_status.total_value_obtained:.2f}",
+                    f"Skins: {skins_count} | Cases: {cases_opened_total} | Value: ${total_value:.2f}",
+                    size=11,
+                    color="#666666",
+                ),
+                ft.Text(
+                    f"Last check: {_fmt_ts(last_check)} | Last open: {_fmt_ts(last_open)}",
                     size=11,
                     color="#666666",
                 ),
@@ -156,11 +223,6 @@ class AccountsPage:
         # Action buttons
         actions = ft.Row(
             [
-                ft.IconButton(
-                    "refresh",
-                    tooltip="Login/Refresh",
-                    on_click=lambda _: self._refresh_account(account),
-                ),
                 ft.IconButton(
                     "stop" if is_running else "play_arrow",
                     tooltip="Stop Bot" if is_running else "Run Bot",
@@ -205,61 +267,9 @@ class AccountsPage:
         steam_dialog = SteamLoginQRDialog(self.app, on_success=on_account_added)
         steam_dialog.show()
     
-    def _import_profiles(self, e):
-        """Import profiles from profiles/ folder"""
-        db = SessionLocal()
-        try:
-            # Get available profiles to import
-            available = AccountCRUD.get_available_profiles_to_import()
-            
-            if not available:
-                self.app.main_area.page.snack_bar = ft.SnackBar(
-                    ft.Text("❌ No profiles found in profiles/ folder")
-                )
-                self.app.main_area.page.snack_bar.open = True
-                self.app.main_area.page.update()
-                return
-            
-            # Import all profiles
-            results = AccountCRUD.import_profiles_from_folder(db)
-            
-            # Count successes
-            imported = sum(1 for v in results.values() if v)
-            skipped = len(results) - imported
-            
-            message = f"✓ Imported {imported} profile(s)"
-            if skipped > 0:
-                message += f", skipped {skipped} (already exist)"
-            
-            self.refresh_accounts()
-            
-            self.app.main_area.page.snack_bar = ft.SnackBar(ft.Text(message))
-            self.app.main_area.page.snack_bar.open = True
-            self.app.main_area.page.update()
-            
-        except Exception as ex:
-            self.app.main_area.page.snack_bar = ft.SnackBar(
-                ft.Text(f"❌ Import error: {str(ex)}")
-            )
-            self.app.main_area.page.snack_bar.open = True
-            self.app.main_area.page.update()
-        
-        finally:
-            db.close()
-    
     def _close_dialog(self, dlg):
         dlg.open = False
         self.app.main_area.page.update()
-    
-    def _refresh_account(self, account):
-        """Trigger Steam login for account"""
-        # Show Steam login dialog
-        if not self.steam_login_dialog:
-            self.steam_login_dialog = SteamLoginDialog(self.app, account)
-        else:
-            self.steam_login_dialog.account = account
-        
-        self.steam_login_dialog.show()
     
     def _run_bot(self, account):
         """Run bot for account"""
