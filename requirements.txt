@@ -1,5 +1,5 @@
 flet==0.24.1
-sqlalchemy==2.0.25
+sqlalchemy==2.0.48
 psycopg2-binary>=2.9.9
 qrcode==7.4.2
 pillow>=10.4.0

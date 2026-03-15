@@ -1,52 +1,43 @@
-# casehugauto.spec
-import sys
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+# -*- mode: python ; coding: utf-8 -*-
+"""Release spec for CaseHugAuto.
+
+Build command:
+  pyinstaller --clean --noconfirm casehugauto.spec
+"""
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
-# Colectează submodulele necesare
 hidden_imports = (
-    collect_submodules("flet") +
-    collect_submodules("sqlalchemy") +
-    collect_submodules("casehugauto") +
-    [
-        "casehugauto.app",
-        "casehugauto.core.bot_logic",
-        "casehugauto.core.bot_runner",
-        "casehugauto.core.steam_login_launcher",
-        "casehugauto.core.steam_client",
-        "casehugauto.core.profile_importer",
-        "casehugauto.core.profile_store",
-        "casehugauto.database.db",
-        "casehugauto.database.crud",
-        "casehugauto.models.models",
-        "casehugauto.ui.pages.home",
-        "casehugauto.ui.pages.accounts",
-        "casehugauto.ui.pages.settings",
-        "casehugauto.ui.pages.skins",
-        "casehugauto.ui.components.steam_login_dialog",
-        "casehugauto.ui.components.steam_login_qr_dialog",
-        "casehugauto.ui.components.db_connection_dialog",
-        "casehugauto.ui.components.database_connection",
-        "importlib.util",
-        "subprocess",
-        "asyncio",
-        "threading",
-        "sqlite3",
-        "json",
-        "re",
+    collect_submodules("flet")
+    + collect_submodules("sqlalchemy")
+    + collect_submodules("casehugauto")
+    + [
+        "psycopg2",
+        "psycopg2.extensions",
+        "psycopg2.extras",
+        "nodriver",
+        "selenium",
+        "undetected_chromedriver",
+        "qrcode",
+        "PIL",
+        "PIL.Image",
     ]
 )
 
 datas = (
-    collect_data_files("flet") +
-    [
-        ("casehugauto/assets", "casehugauto/assets"),
+    collect_data_files("flet")
+    + collect_data_files("casehugauto", includes=["assets/**/*"])
+    + [
+        ("README.md", "."),
+        ("config.example.json", "."),
+        (".env.example", "."),
     ]
 )
 
 a = Analysis(
-    ["run.py"],                     # Entry point = run.py
+    ["run.py"],
     pathex=["."],
     binaries=[],
     datas=datas,
@@ -54,14 +45,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        # Excludem librăriile grele — se instalează la runtime
-        "nodriver",
-        "selenium",
-        "undetected_chromedriver",
-        "psycopg2",
-        "qrcode",
-    ],
+    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -77,17 +61,17 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="CasehugAuto",
+    name="CaseHugAuto",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,          # Fără consolă vizibilă
+    console=False,
+    icon="casehugauto/assets/casehugauto_icon.ico",
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon="casehugauto/assets/icon.ico",  # Schimbă cu iconița ta
 )
