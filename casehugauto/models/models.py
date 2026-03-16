@@ -44,6 +44,7 @@ class Skin(Base):
     
     # Skin information
     skin_name = Column(String(500), nullable=False, index=True)
+    external_item_id = Column(String(64), nullable=True, index=True)
     skin_image_url = Column(Text, nullable=True)
     rarity = Column(String(100), nullable=True)  # e.g., "Ordinary", "Rare", "Legendary"
     estimated_price = Column(Float, nullable=True)

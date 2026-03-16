@@ -202,6 +202,7 @@ class DatabaseConnectionDialog:
                 ),
             ],
             spacing=10,
+            tight=True,
             scroll=ft.ScrollMode.AUTO,
         )
 

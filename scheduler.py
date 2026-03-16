@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-CasehugBot Smart Scheduler - Calculează timpul exact al următoarei rulări
-Rulează DOAR când e necesar (nu mai verifică periodic)
-Exemplu: deschis pe 7 martie la 12:45 → next run: 8 martie la 12:46
-Dacă PC pornește târziu (ex: 8 martie 16:32) → rulează IMEDIAT
+CasehugBot Smart Scheduler - Calculates exact time for the next runs
+Runs ONLY when needed (no periodic checks)
+Example: opened on March 7 at 12:45 -> next run: March 8 at 12:46
+If PC starts late (ex: March 8 16:32) -> run IMMEDIATELY
 """
 
 import os
@@ -17,23 +17,23 @@ import atexit
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Configurație
+# Configuration
 LAST_OPENING_FILE = "last_opening.json"
 SCHEDULE_CONFIG_FILE = "schedule_config.json"
 LOCK_FILE = "scheduler.lock"
 
 class CasehugScheduler:
     def __init__(self):
-        """Inițializează scheduler-ul"""
+        """Initialize scheduler"""
         self.config = self.load_schedule_config()
         self.last_opening = self.load_last_opening()
         self.lock_file_path = os.path.abspath(LOCK_FILE)
         
-        # Înregistrează cleanup la exit
+        # Register cleanup at exit
         atexit.register(self.cleanup_lock)
     
     def is_already_running(self):
-        """Verifică dacă există o altă instanță a scheduler-ului care rulează"""
+        """Check whether another scheduler instance is running"""
         if not os.path.exists(self.lock_file_path):
             return False
         
@@ -41,57 +41,57 @@ class CasehugScheduler:
             with open(self.lock_file_path, 'r') as f:
                 pid = int(f.read().strip())
             
-            # Verifică dacă procesul cu acest PID încă rulează
+            # Check if process with this PID is still running
             if psutil.pid_exists(pid):
                 try:
                     proc = psutil.Process(pid)
-                    # Verifică dacă e scheduler.py
+                    # Check if e scheduler.py
                     cmdline = ' '.join(proc.cmdline())
                     if 'scheduler.py' in cmdline:
-                        print(f"⚠️  Scheduler deja rulează (PID: {pid})")
+                        print(f"⚠️  Scheduler is already running (PID: {pid})")
                         return True
                 except:
                     pass
             
-            # PID-ul nu mai există sau nu e scheduler - șterge lock vechi
+            # PID no longer exists or is not scheduler - delete old lock
             os.remove(self.lock_file_path)
             return False
             
         except Exception as e:
-            print(f"⚠️  Eroare verificare lock: {e}")
+            print(f"⚠️  Lock verification error: {e}")
             return False
     
     def create_lock(self):
-        """Creează fișier lock cu PID-ul curent"""
+        """Create lock file with current PID"""
         try:
             pid = os.getpid()
             with open(self.lock_file_path, 'w') as f:
                 f.write(str(pid))
-            print(f"🔒 Lock creat (PID: {pid})")
+            print(f"🔒 Lock created (PID: {pid})")
             return True
         except Exception as e:
-            print(f"❌ Eroare creare lock: {e}")
+            print(f"❌ Lock creation error: {e}")
             return False
     
     def cleanup_lock(self):
-        """Șterge fișierul lock la ieșire"""
+        """Delete lock file on exit"""
         try:
             if os.path.exists(self.lock_file_path):
                 os.remove(self.lock_file_path)
-                print(f"🔓 Lock șters")
+                print(f"🔓 Lock removed")
         except Exception as e:
-            print(f"⚠️  Eroare ștergere lock: {e}")
+            print(f"⚠️  Lock deletion error: {e}")
     
     def load_schedule_config(self):
-        """Încarcă configurația scheduler-ului"""
+        """Load scheduler configuration"""
         default_config = {
             "enabled": True,
             "scheduler_mode": "periodic",  # "smart" = exact time calculation | "periodic" = check every X minutes
             "check_interval_minutes": 30,  # For periodic mode only - check every X minutes
             "cooldown_grace_minutes": 1,  # Added after hours_between_runs to avoid edge timing issues
-            "require_steam_login": True,  # Verifică dacă Steam e pornit și logat
-            "hours_between_runs": 24,  # 24 ore + 1 min între rulări (standard pentru case-uri)
-            "accounts_with_steam": []  # Lista conturi care folosesc Steam ["Cont 1", "Cont 2"]
+            "require_steam_login": True,  # Check if Steam e pornit and logat
+            "hours_between_runs": 24,  # 24 hours + 1 min between runs (standard for cases)
+            "accounts_with_steam": []  # List of accounts that use Steam ["Account 1", "Account 2"]
         }
         
         if os.path.exists(SCHEDULE_CONFIG_FILE):
@@ -99,19 +99,19 @@ class CasehugScheduler:
                 loaded = json.load(f)
                 default_config.update(loaded)
         else:
-            # Creează config implicit
+            # Create default config
             with open(SCHEDULE_CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(default_config, f, indent=2, ensure_ascii=False)
-            print(f"✅ Config creat: {SCHEDULE_CONFIG_FILE}")
+            print(f"✅ Config created: {SCHEDULE_CONFIG_FILE}")
         
         return default_config
     
     def load_last_opening(self):
-        """Încarcă tracking-ul ultimelor deschideri pe cont"""
+        """Load tracking for latest openings per account"""
         if not os.path.exists(LAST_OPENING_FILE):
-            # Creează fișier nou
+            # Create new file
             default_data = {}
-            # Încarcă conturile din config.json
+            # Load accounts from config.json
             try:
                 with open('config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
@@ -137,12 +137,12 @@ class CasehugScheduler:
             return {}
     
     def save_last_opening(self):
-        """Salvează tracking-ul ultimelor deschideri"""
+        """Save latest openings tracking"""
         with open(LAST_OPENING_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.last_opening, f, indent=2, ensure_ascii=False)
     
     def update_account_opening(self, account_name):
-        """Actualizează timestamp-ul ultimei deschideri pentru un cont"""
+        """Update timestamp of latest opening for an account"""
         if account_name not in self.last_opening:
             self.last_opening[account_name] = {}
         
@@ -150,10 +150,10 @@ class CasehugScheduler:
         self.last_opening[account_name]['last_opening'] = timestamp
         self.last_opening[account_name]['last_check'] = timestamp
         self.save_last_opening()
-        print(f"   ✅ Salvat timestamp pentru {account_name}: {timestamp}")
+        print(f"   ✅ Saved timestamp for {account_name}: {timestamp}")
     
     def update_account_check(self, account_name):
-        """Actualizează doar timestamp-ul ultimei verificări (fără deschidere)"""
+        """Update only latest check timestamp (without opening)"""
         if account_name not in self.last_opening:
             self.last_opening[account_name] = {}
         
@@ -162,7 +162,7 @@ class CasehugScheduler:
         self.save_last_opening()
     
     def calculate_next_run_time(self):
-        """Calculează timpul exact al următoarei rulări (cel mai apropiat cont care trebuie să ruleze)"""
+        """Calculate exact time for next run (closest account that should run)"""
         hours_required = self.config.get('hours_between_runs', 24)
         grace_minutes = self.config.get('cooldown_grace_minutes', 1)
         next_runs = []
@@ -170,46 +170,46 @@ class CasehugScheduler:
         for account_name, data in self.last_opening.items():
             last_opening_str = data.get('last_opening')
             
-            # Prima rulare sau niciodată deschis - rulează imediat
+            # First run or never opened - run immediately
             if not last_opening_str:
-                return datetime.now()  # Rulează acum
+                return datetime.now()  # Run now
             
-            # Calculează timpul exact al următoarei rulări: last_opening + hours + grace_minutes
+            # Calculate exact next run time: last_opening + hours + grace_minutes
             try:
                 last_opening = datetime.fromisoformat(last_opening_str)
                 next_run = last_opening + timedelta(hours=hours_required, minutes=grace_minutes)
                 next_runs.append((account_name, next_run))
             except:
-                # Eroare parsare - rulează imediat
+                # Parse error - run immediately
                 return datetime.now()
         
-        # Returnează cel mai apropiat timp (contul care trebuie să ruleze primul)
+        # Return closest time (account that should run first)
         if next_runs:
-            next_runs.sort(key=lambda x: x[1])  # Sortează după timp
+            next_runs.sort(key=lambda x: x[1])  # Sort by time
             earliest_account, earliest_time = next_runs[0]
             return earliest_time
         else:
-            # Niciun cont în tracking - rulează imediat
+            # No account in tracking - run immediately
             return datetime.now()
     
     def get_accounts_ready_to_open(self):
-        """Obține lista conturilor care pot deschide case-uri (au trecut 24h)"""
+        """Get list of accounts that can open cases (24h passed)"""
         ready_accounts = []
         hours_required = self.config.get('hours_between_runs', 24)
         
         for account_name, data in self.last_opening.items():
             last_opening_str = data.get('last_opening')
             
-            # Prima rulare sau niciodată deschis
+            # First run or never opened
             if not last_opening_str:
                 ready_accounts.append({
                     'name': account_name,
-                    'reason': 'Prima deschidere',
+                    'reason': 'First opening',
                     'hours_passed': None
                 })
                 continue
             
-            # Calculează timp trecut
+            # Calculate elapsed time
             try:
                 last_opening = datetime.fromisoformat(last_opening_str)
                 hours_passed = (datetime.now() - last_opening).total_seconds() / 3600
@@ -217,23 +217,23 @@ class CasehugScheduler:
                 if hours_passed >= hours_required:
                     ready_accounts.append({
                         'name': account_name,
-                        'reason': f'Au trecut {hours_passed:.1f}h',
+                        'reason': f'{hours_passed:.1f}h passed',
                         'hours_passed': hours_passed
                     })
             except:
-                # Eroare parsare - tratează ca prima deschidere
+                # Parse error - treat as first opening
                 ready_accounts.append({
                     'name': account_name,
-                    'reason': 'Eroare timestamp - reset',
+                    'reason': 'Timestamp error - reset',
                     'hours_passed': None
                 })
         
         return ready_accounts
     
     def is_steam_running_and_logged_in(self):
-        """Verifică dacă Steam este pornit și utilizatorul este logat"""
+        """Check if Steam is running and user is logged in"""
         try:
-            # Verifică dacă procesul Steam rulează
+            # Check if Steam process is running
             steam_running = False
             for proc in psutil.process_iter(['name']):
                 if proc.info['name'] and 'steam.exe' in proc.info['name'].lower():
@@ -243,7 +243,7 @@ class CasehugScheduler:
             if not steam_running:
                 return False
             
-            # Verifică dacă Steam este logat (check loginusers.vdf)
+            # Check if Steam is logged in (check loginusers.vdf)
             steam_path = None
             possible_paths = [
                 r"C:\Program Files (x86)\Steam",
@@ -265,7 +265,7 @@ class CasehugScheduler:
             if not os.path.exists(loginusers_file):
                 return False
             
-            # Citește fișierul și verifică dacă există utilizator recent
+            # Read file and check if there is a recent user
             with open(loginusers_file, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
                 if '"users"' in content.lower() or '"76561' in content:
@@ -277,17 +277,17 @@ class CasehugScheduler:
             return False
     
     def check_internet_connection(self):
-        """Verifică dacă există conexiune la internet"""
+        """Check if internet connection exists"""
         import socket
         
         try:
-            # Încearcă să conecteze la Google DNS (8.8.8.8) pe port 53
-            # Timeout de 3 secunde pentru a nu aștepta prea mult
+            # Try connecting to Google DNS (8.8.8.8) on port 53
+            # 3-second timeout to avoid waiting too long
             socket.setdefaulttimeout(3)
             socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
             return True
         except socket.error:
-            # Încearcă Cloudflare DNS (1.1.1.1) ca backup
+            # Try Cloudflare DNS (1.1.1.1) as backup
             try:
                 socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("1.1.1.1", 53))
                 return True
@@ -295,48 +295,48 @@ class CasehugScheduler:
                 return False
     
     async def run_bot_for_accounts(self, account_names):
-        """Rulează botul pentru conturile specificate"""
+        """Run bot for specified accounts"""
         try:
             print("\n" + "="*60)
-            print(f"🚀 PORNIRE CASEHUGBOT - {len(account_names)} CONTURI")
+            print(f"🚀 STARTING CASEHUGBOT - {len(account_names)} ACCOUNTS")
             print("="*60)
             
-            # Importă și rulează main.py
+            # Import and run main.py
             from main import CasehugBotNodriver
             
-            # Filtrează conturile în config temporar
+            # Filter accounts in temporary config
             with open('config.json', 'r', encoding='utf-8') as f:
                 full_config = json.load(f)
             
-            # Salvează configurația originală
+            # Save original configuration
             original_accounts = full_config['accounts'].copy()
             
-            # Filtrează doar conturile ready
+            # Keep only ready accounts
             full_config['accounts'] = [
                 acc for acc in full_config['accounts'] 
                 if acc['name'] in account_names
             ]
             
-            # Salvează config temporar
+            # Save temporary config
             with open('config_temp.json', 'w', encoding='utf-8') as f:
                 json.dump(full_config, f, indent=2, ensure_ascii=False)
             
-            # Rulează botul cu config temporar
+            # Run bot with temporary config
             bot = CasehugBotNodriver('config_temp.json')
             results = await bot.run()
             
-            # Actualizează timestamp-urile pentru conturile procesate
+            # Update timestamps for processed accounts
             for account_name in account_names:
-                # Verifică dacă contul a deschis case-uri cu succes
-                # (putem presupune că da dacă nu a fost eroare)
+                # Check if account opened cases successfully
+                # (we can assume yes if no error occurred)
                 self.update_account_opening(account_name)
             
-            # Șterge config temporar
+            # Delete temporary config
             if os.path.exists('config_temp.json'):
                 os.remove('config_temp.json')
             
             print("\n" + "="*60)
-            print("✅ CASEHUGBOT FINALIZAT - ÎNCHIDERE AUTOMATĂ")
+            print("✅ CASEHUGBOT COMPLETED - AUTO SHUTDOWN")
             print("="*60)
             
             return True
@@ -346,30 +346,30 @@ class CasehugScheduler:
             import traceback
             traceback.print_exc()
             
-            # Curăță config temporar
+            # Clean temporary config
             if os.path.exists('config_temp.json'):
                 os.remove('config_temp.json')
             
             return False
     
     async def check_and_run(self):
-        """Verifică condițiile și rulează botul pentru conturile ready"""
+        """Check conditions and run bot for ready accounts"""
         print("\n" + "="*60)
-        print(f"🔍 VERIFICARE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"🔍 CHECK - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60)
         
-        # 1. Verifică dacă scheduler-ul este activat
+        # 1. Check whether scheduler is enabled
         if not self.config.get('enabled', True):
-            print("❌ Scheduler dezactivat în configurație")
+            print("❌ Scheduler is disabled in configuration")
             return False
         
-        # 2. Obține conturile ready (au trecut 24h)
+        # 2. Get ready accounts (24h passed)
         ready_accounts = self.get_accounts_ready_to_open()
         
         if not ready_accounts:
-            print("⏳ Niciun cont ready - aștept 24h de la ultima deschidere")
+            print("⏳ No ready accounts - waiting 24h since the last opening")
             
-            # Afișează status pentru fiecare cont
+            # Show status for each account
             hours_required = self.config.get('hours_between_runs', 24)
             for account_name, data in self.last_opening.items():
                 last_opening_str = data.get('last_opening')
@@ -378,47 +378,47 @@ class CasehugScheduler:
                         last_opening = datetime.fromisoformat(last_opening_str)
                         hours_passed = (datetime.now() - last_opening).total_seconds() / 3600
                         remaining = hours_required - hours_passed
-                        print(f"   {account_name}: {hours_passed:.1f}h trecut | {remaining:.1f}h rămas")
+                        print(f"   {account_name}: {hours_passed:.1f}h passed | {remaining:.1f}h remaining")
                     except:
                         pass
                 else:
-                    print(f"   {account_name}: Niciodată deschis (va rula la următoarea verificare)")
+                    print(f"   {account_name}: Never opened (will run at next check)")
             
             return False
         
-        print(f"✅ {len(ready_accounts)} conturi READY:")
+        print(f"✅ {len(ready_accounts)} accounts READY:")
         for acc in ready_accounts:
             print(f"   • {acc['name']}: {acc['reason']}")
         
-        # 3. Verifică conexiunea la internet
-        print(f"\n🌐 Verificare internet...")
+        # 3. Check internet connection
+        print(f"\n🌐 Check internet...")
         if not self.check_internet_connection():
             check_interval_minutes = self.config.get('check_interval_minutes', 30)
-            print("❌ NU EXISTĂ CONEXIUNE LA INTERNET!")
-            print("   💡 Conectează-te la internet și încearcă din nou")
-            print(f"   ⏳ Următoarea verificare în {check_interval_minutes} minute...")
+            print("❌ NO INTERNET CONNECTION!")
+            print("   💡 Connect to the internet and try again")
+            print(f"   ⏳ Next check in {check_interval_minutes} minutes...")
             return False
-        print("✅ Internet conectat")
+        print("✅ Internet connected")
         
-        # 4. Verifică Steam dacă este necesar
+        # 4. Check Steam if required
         require_steam = self.config.get('require_steam_login', True)
         if require_steam:
             accounts_with_steam = self.config.get('accounts_with_steam', [])
-            # Verifică dacă măcar un cont ready folosește Steam
+            # Check if at least one ready account uses Steam
             ready_with_steam = [acc for acc in ready_accounts if acc['name'] in accounts_with_steam]
             
             if ready_with_steam:
-                print(f"\n🔍 Verificare Steam...")
+                print(f"\n🔍 Check Steam...")
                 if not self.is_steam_running_and_logged_in():
                     check_interval_minutes = self.config.get('check_interval_minutes', 30)
-                    print("⚠️  STEAM NU ESTE PORNIT SAU NU EȘTI LOGAT")
-                    print("   💡 Pornește Steam și loghează-te")
-                    print(f"   🔄 Voi verifica din nou în {check_interval_minutes} minute...")
+                    print("⚠️  STEAM IS NOT RUNNING OR YOU ARE NOT LOGGED IN")
+                    print("   💡 Start Steam and log in")
+                    print(f"   🔄 Will check again in {check_interval_minutes} minutes...")
                     return False
                 else:
-                    print("✅ Steam detectat și logat")
+                    print("✅ Steam detected and logged in")
         
-        # 4. Toate condițiile îndeplinite - RULEAZĂ BOTUL
+        # 4. All conditions met - RUN BOT
         print("\n🚀 PORNESC BOTUL...\n")
         account_names = [acc['name'] for acc in ready_accounts]
         success = await self.run_bot_for_accounts(account_names)
@@ -443,19 +443,19 @@ class CasehugScheduler:
 ║      CASEHUGBOT SCHEDULER - PERIODIC MODE (CLASSIC)       ║
 ╚═══════════════════════════════════════════════════════════╝
 
-📋 Configurație:
-   🔄 Mode: PERIODIC (verifică constant)
-    ⏱️  Interval verificare: {check_interval_minutes} minute
-   ⏳ Interval deschideri: {self.config.get('hours_between_runs', 24)}h
-   🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
-   📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
+📋 Configuration:
+   🔄 Mode: PERIODIC (check constant)
+    ⏱️  Interval check: {check_interval_minutes} minute
+   ⏳ Interval openings: {self.config.get('hours_between_runs', 24)}h
+   🎮 Steam required: {'DA' if self.config.get('require_steam_login') else 'NU'}
+   📦 Steam accounts: {', '.join(self.config.get('accounts_with_steam', [])) or 'All'}
 
 💡 PERIODIC SYSTEM:
-    • Verifică la fiecare {check_interval_minutes} minute dacă au trecut 24h
-   • Rulează automat când conturile sunt ready
-   • Se închide după procesare (Task Scheduler repornește)
+    • Check every {check_interval_minutes} minute if 24h have passed
+   • Run automatically when accounts are ready
+   • Close after processing (Task Scheduler restarts it)
 
-📊 Status conturi:""")
+📊 Status accounts:""")
         
         hours_required = self.config.get('hours_between_runs', 24)
         for account_name, data in self.last_opening.items():
@@ -467,33 +467,33 @@ class CasehugScheduler:
                     remaining = hours_required - hours_passed
                     
                     if remaining > 0:
-                        print(f"   ⏳ {account_name}: {remaining:.1f}h până la următoarea deschidere")
+                        print(f"   ⏳ {account_name}: {remaining:.1f}h until next opening")
                     else:
-                        print(f"   ✅ {account_name}: READY (au trecut {hours_passed:.1f}h)")
+                        print(f"   ✅ {account_name}: READY ({hours_passed:.1f}h passed)")
                 except:
-                    print(f"   • {account_name}: Eroare timestamp - va fi resetat")
+                    print(f"   • {account_name}: Timestamp error - will be reset")
             else:
-                print(f"   • {account_name}: Prima rulare - READY")
+                print(f"   • {account_name}: First run - READY")
         
         print("\n" + "="*60 + "\n")
         
-        # Loop periodic - verifică constant
+        # Loop periodic - check constant
         while True:
             try:
                 success = await self.check_and_run()
                 
                 if success:
-                    print("\n✅ Procesare completă - ÎNCHIDERE SCHEDULER")
-                    print("   💡 Task Scheduler va reporni automat")
-                    break  # Exit din loop - închide scheduler-ul
+                    print("\n✅ Processing complete - SCHEDULER EXIT")
+                    print("   💡 Task Scheduler will restart automatically")
+                    break  # Exit loop - close scheduler
                 
-                # Așteaptă următoarea verificare
-                print(f"\n⏰ Următoarea verificare în {check_interval_minutes} minute...")
-                print(f"   (la ora {(datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')})")
+                # Wait next check
+                print(f"\n⏰ Next check in {check_interval_minutes} minutes...")
+                print(f"   (at {(datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')})")
                 await asyncio.sleep(check_interval)
                 
             except KeyboardInterrupt:
-                print("\n\n⚠️  Scheduler oprit manual (Ctrl+C)")
+                print("\n\n⚠️  Scheduler stopped manually (Ctrl+C)")
                 break
     
     async def _run_smart_mode(self):
@@ -504,19 +504,19 @@ class CasehugScheduler:
 ║      CASEHUGBOT SCHEDULER - SMART MODE (ZERO CHECKS)      ║
 ╚═══════════════════════════════════════════════════════════╝
 
-📋 Configurație:
-   🧠 Mode: SMART (calcul exact, zero verificări periodice)
-    ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h + {grace_minutes}min între deschideri
-   🎮 Steam necesar: {'DA' if self.config.get('require_steam_login') else 'NU'}
-   📦 Conturi Steam: {', '.join(self.config.get('accounts_with_steam', [])) or 'Toate'}
+📋 Configuration:
+   🧠 Mode: SMART (exact calculation, zero periodic checks)
+    ⏱️  Interval: {self.config.get('hours_between_runs', 24)}h + {grace_minutes}min between openings
+   🎮 Steam required: {'DA' if self.config.get('require_steam_login') else 'NU'}
+   📦 Steam accounts: {', '.join(self.config.get('accounts_with_steam', [])) or 'All'}
 
 💡 SMART SYSTEM:
-   • Calculează timpul EXACT al următoarei deschideri
-   • Task Scheduler pornește DOAR când e timpul
-   • Dacă PC pornește târziu → rulează IMEDIAT
-   • ZERO verificări periodice = ZERO resurse consumate
+   • Calculate EXACT time of next openings
+   • Task Scheduler starts ONLY when it is time
+   • If PC starts late → run IMEDIAT
+   • ZERO periodic checks = ZERO resource usage
 
-📊 Status conturi:""")
+📊 Status accounts:""")
         
         hours_required = self.config.get('hours_between_runs', 24)
         now = datetime.now()
@@ -541,13 +541,13 @@ class CasehugScheduler:
         
         print("\n" + "="*60 + "\n")
         
-        # Calculează timpul exact al următoarei rulări
+        # Calculate exact time of next runs
         next_run_time = self.calculate_next_run_time()
         
-        # Calculează diferența de timp (în secunde)
+        # Calculate time difference (in seconds)
         time_until_seconds = (next_run_time - now).total_seconds()
         
-        # Verifică dacă timpul a venit (sau a trecut) - toleranță 1 secundă
+        # Check if time has arrived (or passed) - 1 second tolerance
         if time_until_seconds <= 1:
             print(f"⏰ TIME TO RUN! Scheduled time: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"   Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -566,7 +566,7 @@ class CasehugScheduler:
             except KeyboardInterrupt:
                 print("\n\n⚠️  Scheduler stopped manually (Ctrl+C)")
         else:
-            # Timpul nu a venit încă - afișează când va fi
+            # Time has not arrived yet - show when it will
             time_until = next_run_time - now
             hours_until = time_until.total_seconds() / 3600
             print(f"⏰ NOT TIME YET")
@@ -579,31 +579,31 @@ class CasehugScheduler:
             print(f'   Edit schedule_config.json: "scheduler_mode": "periodic"')
     
     def run(self):
-        """Pornește scheduler-ul"""
-        # Verifică dacă deja rulează o altă instanță
+        """Start scheduler"""
+        # Check if another instance is already running
         if self.is_already_running():
-            print("❌ O altă instanță a scheduler-ului deja rulează!")
-            print("   Nu pornesc o nouă instanță (previne procese multiple)")
+            print("❌ Another scheduler instance is already running!")
+            print("   Not starting a new instance (prevents multiple processes)")
             return False
         
-        # Creează lock file
+        # Create lock file
         if not self.create_lock():
-            print("❌ Nu am putut crea lock file!")
+            print("❌ Could not create lock file!")
             return False
         
         try:
             asyncio.run(self.run_scheduler_loop())
             return True
         except KeyboardInterrupt:
-            print("\n\n⛔ Scheduler oprit de utilizator")
+            print("\n\n⛔ Scheduler stopped by user")
             return False
         except Exception as e:
-            print(f"\n❌ Eroare critică scheduler: {e}")
+            print(f"\n❌ Critical scheduler error: {e}")
             import traceback
             traceback.print_exc()
             return False
         finally:
-            # Cleanup lock la final
+            # Cleanup lock at exit
             self.cleanup_lock()
 
 

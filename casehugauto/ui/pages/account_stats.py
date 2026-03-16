@@ -18,13 +18,21 @@ class AccountStatsPage:
 
     def build(self) -> ft.Container:
         """Build account statistics page."""
-        # UI is rebuilt on each navigation; force first refresh to repopulate values.
         self._last_snapshot = None
 
         header = ft.Row(
             [
                 ft.Text("Account Statistics", size=24, weight="bold"),
-                ft.ElevatedButton("Refresh", icon="refresh", on_click=lambda _: self._refresh_stats()),
+                ft.ElevatedButton(
+                    "Refresh",
+                    icon="refresh",
+                    style=ft.ButtonStyle(
+                        bgcolor="#1d3f5f",
+                        color="#e8f6ff",
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                    ),
+                    on_click=lambda _: self._refresh_stats(),
+                ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
@@ -36,6 +44,7 @@ class AccountStatsPage:
                 self._create_summary_card("Total Value", "$0.00", "trending_up"),
             ],
             spacing=12,
+            run_spacing=12,
             wrap=True,
         )
 
@@ -60,7 +69,18 @@ class AccountStatsPage:
         self._refresh_stats(update_ui=False)
         self._start_refresh_loop()
 
-        return ft.Container(content=self.content, expand=True, padding=10)
+        return ft.Container(
+            content=self.content,
+            expand=True,
+            padding=14,
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
+                colors=["#0d1628", "#101b31", "#0b1423"],
+            ),
+            border=ft.border.all(1, "#233854"),
+            border_radius=14,
+        )
 
     def _start_refresh_loop(self):
         if self._refresh_loop_started:
@@ -174,7 +194,7 @@ class AccountStatsPage:
                 if not items:
                     self.stats_list.controls.append(
                         ft.Container(
-                            content=ft.Text("No account statistics available yet.", color="#888888"),
+                            content=ft.Text("No account statistics available yet.", color="#9aa7bd"),
                             padding=20,
                         )
                     )
@@ -189,11 +209,12 @@ class AccountStatsPage:
 
     def _create_summary_card(self, title: str, value: str, icon_name: str) -> ft.Card:
         return ft.Card(
+            elevation=3,
             content=ft.Container(
                 content=ft.Column(
                     [
-                        ft.Icon(icon_name, size=26, color="#00d4ff"),
-                        ft.Text(title, size=12, color="#9aa3b2"),
+                        ft.Icon(icon_name, size=26, color="#7ed8ff"),
+                        ft.Text(title, size=12, color="#9aa7bd"),
                         ft.Text(value, size=20, weight="bold"),
                     ],
                     spacing=8,
@@ -201,8 +222,14 @@ class AccountStatsPage:
                 ),
                 padding=16,
                 width=240,
-                bgcolor="#1a1a1a",
-            )
+                gradient=ft.LinearGradient(
+                    begin=ft.alignment.top_left,
+                    end=ft.alignment.bottom_right,
+                    colors=["#142238", "#101c2f"],
+                ),
+                border=ft.border.all(1, "#2a4363"),
+                border_radius=12,
+            ),
         )
 
     def _create_account_stats_card(self, item: dict) -> ft.Card:
@@ -210,6 +237,7 @@ class AccountStatsPage:
         bot_color = "#51cf66" if item["bot_status"].lower() == "running" else "#9aa3b2"
 
         return ft.Card(
+            elevation=2,
             content=ft.Container(
                 content=ft.Column(
                     [
@@ -228,7 +256,7 @@ class AccountStatsPage:
                             [
                                 ft.Text(f"Bot: {item['bot_status']}", size=12, color=bot_color),
                                 ft.Container(expand=True),
-                                ft.Text(f"Last Run: {item['last_run']}", size=11, color="#888888"),
+                                ft.Text(f"Last Run: {item['last_run']}", size=11, color="#9aa7bd"),
                             ]
                         ),
                         ft.Row(
@@ -245,6 +273,12 @@ class AccountStatsPage:
                     spacing=8,
                 ),
                 padding=14,
-                bgcolor="#1a1a1a",
-            )
+                gradient=ft.LinearGradient(
+                    begin=ft.alignment.top_left,
+                    end=ft.alignment.bottom_right,
+                    colors=["#142238", "#101c2f"],
+                ),
+                border=ft.border.all(1, "#2a4363"),
+                border_radius=12,
+            ),
         )

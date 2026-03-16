@@ -23,6 +23,8 @@ hidden_imports = (
         "qrcode",
         "PIL",
         "PIL.Image",
+        "pystray",
+        "pystray._win32",
     ]
 )
 

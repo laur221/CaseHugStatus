@@ -13,14 +13,16 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 import nodriver as uc
+import requests
 import psutil
 from sqlalchemy.orm import Session
 
 from ..database.crud import AccountCRUD, BotStatusCRUD, SkinCRUD
 from .rarity import rarity_from_color
+from .profile_store import ensure_profile_path as ensure_managed_profile_path
 
 logger = logging.getLogger(__name__)
 logging.getLogger("uc.connection").setLevel(logging.WARNING)
@@ -91,6 +93,40 @@ _JS_EXTRACT_NEW_DROPS = r"""
   return out;
 })()
 """
+
+
+_RARITY_TO_ICON = {
+    "Consumer Grade (White)": "⚪",
+    "Industrial Grade (Light Blue)": "🔵",
+    "Mil-Spec (Blue)": "🔷",
+    "Restricted (Purple)": "🟣",
+    "Classified (Pink)": "🌸",
+    "Covert (Red)": "🔴",
+    "Contraband (Orange)": "🟠",
+    "Unknown": "⚪",
+}
+
+_CASEHUG_FREE_CASE_URLS = (
+    "https://casehug.com/free-cases",
+    "https://hugcase.com/free-cases",
+)
+
+_SESSION_COOKIE_DOMAINS = (
+    ".casehug.com",
+    "casehug.com",
+    ".hugcase.com",
+    "hugcase.com",
+    ".steamcommunity.com",
+    "steamcommunity.com",
+    ".steampowered.com",
+    "steampowered.com",
+)
+
+
+def _rarity_icon(rarity_label: str | None) -> str:
+    if not rarity_label:
+        return "⚪"
+    return _RARITY_TO_ICON.get(str(rarity_label).strip(), "⚪")
 
 
 def _hide_windows_for_pid(pid: int) -> int:
@@ -265,12 +301,14 @@ class AutomationLogic:
         account_id: int,
         stop_event: threading.Event,
         status_callback: Callable,
+        runtime_config: Mapping[str, Any] | None = None,
     ):
         self.db_session = db_session
         self.account_id = account_id
         self.account = AccountCRUD.get_by_id(self.db_session, self.account_id)
         self.stop_event = stop_event
         self._emit_status = status_callback
+        self.runtime_config = dict(runtime_config or {})
         self.browser = None
         self.page = None
         self.last_result_status = "unknown"
@@ -290,15 +328,136 @@ class AutomationLogic:
         finally:
             self._emit_status(self.account_id, "Browser closed.", "info")
 
+    def _cfg_str(self, key: str, default: str = "") -> str:
+        return str(self.runtime_config.get(key, default) or "").strip()
+
+    def _cfg_bool(self, key: str, default: bool = False) -> bool:
+        value = self.runtime_config.get(key, default)
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _cfg_int(self, key: str, default: int = 0) -> int:
+        value = self.runtime_config.get(key, default)
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        try:
+            return int(str(value).strip())
+        except Exception:
+            return default
+
+    def _telegram_is_configured(self) -> bool:
+        return bool(self._cfg_str("telegram_bot_token") and self._cfg_str("telegram_chat_id"))
+
+    def _send_telegram_message(self, message: str) -> bool:
+        token = self._cfg_str("telegram_bot_token")
+        chat_id = self._cfg_str("telegram_chat_id")
+        if not token or not chat_id or not message.strip():
+            return False
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        try:
+            response = requests.post(url, data=payload, timeout=15)
+            if response.status_code != 200:
+                logger.warning(
+                    "Telegram send failed for account %s: status=%s body=%s",
+                    self.account_id,
+                    response.status_code,
+                    response.text,
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("Telegram send exception for account %s: %s", self.account_id, exc)
+            return False
+
+
+    def _format_telegram_report(self, skins: list[dict[str, Any]], opened_cases_count: int) -> str:
+        now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        account_name = (getattr(self.account, "account_name", "") or str(self.account_id)).strip()
+
+        message = "🎰 <b>CaseHug Auto Report</b>\n"
+        message += f"📅 {now}\n"
+        message += "──────────────────────────\n"
+        message += f"<b>Account:</b> {html.escape(account_name)}\n"
+        message += f"<b>Cases opened:</b> {int(opened_cases_count or 0)}\n\n"
+
+        if not skins:
+            message += "❌ No new skins found.\n"
+            return message
+
+        total = 0.0
+        for item in skins:
+            case_name = str(item.get("case") or "unknown").upper()
+            skin_name = str(item.get("skin") or "Unknown skin").strip()
+            price_txt = str(item.get("price") or "$0.00").strip()
+            rarity_label = str(item.get("rarity") or "Unknown").strip()
+            icon = _rarity_icon(rarity_label)
+            total += self._parse_price(price_txt)
+
+            message += (
+                f"{icon} {html.escape(case_name)}: "
+                f"{html.escape(skin_name)} - {html.escape(price_txt)}\n"
+            )
+
+        message += f"\n💰 <b>Total:</b> ${total:.2f}"
+        return message
+
+    def _notify_telegram_results(self, skins: list[dict[str, Any]], opened_cases_count: int):
+        if not self._cfg_bool("telegram_notify_on_skin", True):
+            return
+        if not self._telegram_is_configured():
+            return
+
+        message = self._format_telegram_report(skins, opened_cases_count)
+        sent = self._send_telegram_message(message)
+        if sent:
+            self._emit_status(self.account_id, "Telegram report sent.", "info")
+
+
+    def _notify_telegram_error(self, error_text: str):
+        if not self._cfg_bool("telegram_notify_on_error", True):
+            return
+        if not self._telegram_is_configured():
+            return
+
+        account_name = (getattr(self.account, "account_name", "") or str(self.account_id)).strip()
+        message = (
+            "❌ <b>CaseHug Auto Error</b>\n"
+            f"<b>Account:</b> {html.escape(account_name)}\n"
+            f"<b>Time:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+            f"{html.escape(str(error_text or 'Unknown error'))}"
+        )
+        self._send_telegram_message(message)
+
     # ------------------------------------------------------------------ #
     #  BROWSER SETUP                                                       #
     # ------------------------------------------------------------------ #
 
     async def _start_browser(self):
         """Launch nodriver browser without GUI (off-screen window)."""
-        account_name = _sanitize_profile_name(self.account.account_name)
-        profile_dir = os.path.abspath(f"profiles/{account_name}")
+        account_name = (self.account.account_name or "").strip()
+        configured_profile = str(getattr(self.account, "browser_profile_path", "") or "").strip()
+        profile_dir = configured_profile or ensure_managed_profile_path(account_name)
+        profile_dir = str(Path(profile_dir).expanduser().resolve())
         os.makedirs(profile_dir, exist_ok=True)
+
+        if configured_profile != profile_dir:
+            try:
+                self.account.browser_profile_path = profile_dir
+                self.db_session.commit()
+            except Exception:
+                self.db_session.rollback()
 
         self._emit_status(self.account_id, "Launching browser (no GUI)...", "info")
         _apply_nodriver_websocket_compat_patch()
@@ -494,7 +653,14 @@ class AutomationLogic:
             await self._start_browser()
             await self._login()
             if not await self._is_casehug_logged_in():
-                raise RuntimeError("Steam login was not confirmed on CaseHug.")
+                # Guard against transient post-OpenID redirect states.
+                self._emit_status(
+                    self.account_id,
+                    "Post-login session not confirmed yet, retrying verification...",
+                    "warning",
+                )
+                if not await self._ensure_casehug_context_after_login(timeout_seconds=30):
+                    raise RuntimeError("Steam login was not confirmed on CaseHug.")
 
             if self.stop_event.is_set():
                 self.last_result_status = "stopped"
@@ -530,6 +696,7 @@ class AutomationLogic:
 
             total_value = 0.0
             saved_skins_count = 0
+            saved_results: list[dict[str, Any]] = []
             seen_signatures = set()
             for r in results:
                 try:
@@ -562,38 +729,25 @@ class AutomationLogic:
                         continue
                     seen_signatures.add(signature)
 
-                    if SkinCRUD.find_recent_duplicate(
-                        self.db_session,
-                        account_id=self.account_id,
-                        skin_name=skin_name,
-                        case_source=case_source,
-                        estimated_price=skin_value,
-                        window_minutes=20,
-                    ):
-                        logger.info(
-                            "Skipping recent duplicate skin in DB: account=%s skin=%s case=%s price=%.4f",
-                            self.account_id,
-                            skin_name,
-                            case_source,
-                            skin_value,
-                        )
-                        continue
-
                     rarity_label = str(r.get("rarity") or "").strip() or "Unknown"
 
-                    total_value += skin_value
-                    SkinCRUD.create(
+                    _, created_now = SkinCRUD.upsert_imported(
                         self.db_session,
                         account_id=self.account_id,
                         skin_name=skin_name,
+                        external_item_id=item_id or None,
                         estimated_price=skin_value,
                         case_source=case_source,
                         rarity=rarity_label,
                         condition=r.get("condition"),
                         skin_image_url=r.get("skin_image_url"),
                         obtained_date=obtained_dt,
+                        is_new=True,
                     )
-                    saved_skins_count += 1
+                    if created_now:
+                        total_value += skin_value
+                        saved_skins_count += 1
+                        saved_results.append(dict(r))
                 except Exception as e:
                     logger.warning(f"Could not save skin to DB: {e}")
 
@@ -607,6 +761,12 @@ class AutomationLogic:
                 )
             except Exception as exc:
                 logger.warning("Could not update bot execution stats: %s", exc)
+
+            try:
+                if opened_cases_count > 0:
+                    self._notify_telegram_results(saved_results, opened_cases_count)
+            except Exception as exc:
+                logger.warning("Could not send Telegram report: %s", exc)
 
             self._emit_status(
                 self.account_id,
@@ -625,6 +785,10 @@ class AutomationLogic:
                     "warning",
                 )
             self._emit_status(self.account_id, f"Error: {e}", "error")
+            try:
+                self._notify_telegram_error(str(e))
+            except Exception:
+                pass
             logger.error(f"Error in bot for account {self.account_id}: {e}", exc_info=True)
             self.last_result_status = "error"
         finally:
@@ -651,6 +815,7 @@ class AutomationLogic:
             self._emit_status(self.account_id, "Already logged in with Steam.", "success")
             await self._persist_steam_cookies_from_browser()
             await self._sync_steam_profile_from_browser()
+            await self._ensure_casehug_context_after_login(timeout_seconds=20)
             return
 
         # Restore Steam session from cookies saved in main add-account flow.
@@ -659,12 +824,52 @@ class AutomationLogic:
         else:
             self._emit_status(self.account_id, "Saved Steam cookies not enough, using Steam sign-in flow.", "warning")
 
-        # Fallback: click Steam login button on page
-        if await self._steam_login_via_button():
-            await self._persist_steam_cookies_from_browser()
-            await self._sync_steam_profile_from_browser()
-            return
+        # Fallback: click Steam login button on page.
+        max_additional_retries = max(0, self._cfg_int("steam_login_max_retries", 1))
+        total_attempts = 1 + max_additional_retries
+        for attempt in range(1, total_attempts + 1):
+            if await self._steam_login_via_button():
+                await self._persist_steam_cookies_from_browser()
+                await self._sync_steam_profile_from_browser()
+                if await self._ensure_casehug_context_after_login(timeout_seconds=30):
+                    return
+
+                self._emit_status(
+                    self.account_id,
+                    "Steam login looked successful, but CaseHug session was not stable yet.",
+                    "warning",
+                )
+
+            if attempt < total_attempts:
+                self._emit_status(
+                    self.account_id,
+                    f"Steam login retry {attempt}/{total_attempts - 1}...",
+                    "warning",
+                )
+                try:
+                    await self.page.get("https://casehug.com/free-cases")
+                    await asyncio.sleep(2.5)
+                    await self._wait_for_cloudflare(timeout=25)
+                except Exception:
+                    pass
+
         raise RuntimeError("Steam login could not be confirmed.")
+
+    async def _ensure_casehug_context_after_login(self, timeout_seconds: int = 30) -> bool:
+        """Return to CaseHug page and confirm authenticated state there."""
+        timeout_seconds = max(10, int(timeout_seconds or 30))
+
+        for target_url in _CASEHUG_FREE_CASE_URLS:
+            try:
+                await self.page.get(target_url)
+                await asyncio.sleep(2.0)
+                await self._wait_for_cloudflare(timeout=min(20, timeout_seconds))
+                if await self._is_casehug_logged_in():
+                    return True
+            except Exception:
+                continue
+
+        return await self._wait_for_casehug_login(timeout_seconds=min(45, timeout_seconds + 10))
 
     async def _is_casehug_logged_in(self) -> bool:
         try:
@@ -695,14 +900,14 @@ class AutomationLogic:
         if not cookies:
             return False
 
-        self._emit_status(self.account_id, "Restoring Steam session from saved cookies...", "info")
+        self._emit_status(self.account_id, "Restoring saved session cookies...", "info")
         restored = 0
 
         for name, value in cookies.items():
             if not name:
                 continue
             cookie_value = "" if value is None else str(value)
-            for domain in (".steamcommunity.com", "steamcommunity.com"):
+            for domain in _SESSION_COOKIE_DOMAINS:
                 try:
                     await self.page.send(
                         uc.cdp.network.set_cookie(
@@ -713,13 +918,24 @@ class AutomationLogic:
                         )
                     )
                     restored += 1
-                    break
                 except Exception:
                     continue
 
         if restored == 0:
             return False
 
+        # First, try direct CaseHug session restore (cookies from login dialog are usually CaseHug cookies).
+        for target_url in _CASEHUG_FREE_CASE_URLS:
+            try:
+                await self.page.get(target_url)
+                await asyncio.sleep(2.0)
+                await self._wait_for_cloudflare(timeout=15)
+                if await self._is_casehug_logged_in():
+                    return True
+            except Exception:
+                continue
+
+        # Fallback: verify Steam session, then regular Steam-sign flow can continue.
         try:
             await self.page.get("https://steamcommunity.com/my")
             await asyncio.sleep(2.5)
@@ -764,7 +980,10 @@ class AutomationLogic:
                 ).lower()
                 if not name:
                     continue
-                if ("steamcommunity.com" not in domain) and ("steampowered.com" not in domain):
+                if not any(
+                    host in domain
+                    for host in ("steamcommunity.com", "steampowered.com", "casehug.com", "hugcase.com")
+                ):
                     continue
                 parsed[name] = value
             except Exception:
@@ -794,6 +1013,16 @@ class AutomationLogic:
         """Read Steam profile (id/nickname/avatar) from active session and persist it."""
         if not self.page:
             return False
+
+        original_url = ""
+        restore_casehug_context = False
+        try:
+            original_url = await self._get_tab_url(self.page)
+            low = (original_url or "").lower()
+            restore_casehug_context = ("casehug.com" in low) or ("hugcase.com" in low)
+        except Exception:
+            original_url = ""
+            restore_casehug_context = False
 
         try:
             await self.page.get("https://steamcommunity.com/my")
@@ -870,6 +1099,15 @@ class AutomationLogic:
                 exc,
             )
             return False
+        finally:
+            if restore_casehug_context:
+                target = original_url or _CASEHUG_FREE_CASE_URLS[0]
+                try:
+                    await self.page.get(target)
+                    await asyncio.sleep(1.2)
+                    self._hide_browser_windows()
+                except Exception:
+                    pass
 
     async def _click_best_steam_trigger(self) -> bool:
         # Preferred direct target on CaseHug when user is not authenticated.
@@ -1016,6 +1254,15 @@ class AutomationLogic:
             return
 
         logger.info("Steam OpenID tab detected for account %s.", self.account_id)
+        try:
+            activate_fn = getattr(steam_tab, "activate", None)
+            if callable(activate_fn):
+                maybe = activate_fn()
+                if asyncio.iscoroutine(maybe):
+                    await maybe
+        except Exception:
+            pass
+
         await asyncio.sleep(1.0)
         self._hide_browser_windows()
 
@@ -1075,15 +1322,24 @@ class AutomationLogic:
             if await self._is_casehug_logged_in():
                 return True
 
+            # If Steam OpenID popup is still around, try to complete it again.
+            try:
+                await self._complete_steam_openid_if_needed()
+            except Exception:
+                pass
+
             now = asyncio.get_event_loop().time()
             if now - last_refresh >= 12:
-                try:
-                    await self.page.get("https://casehug.com/free-cases")
-                    await asyncio.sleep(2.0)
-                    self._hide_browser_windows()
-                    await self._wait_for_cloudflare(timeout=15)
-                except Exception:
-                    pass
+                for target_url in _CASEHUG_FREE_CASE_URLS:
+                    try:
+                        await self.page.get(target_url)
+                        await asyncio.sleep(2.0)
+                        self._hide_browser_windows()
+                        await self._wait_for_cloudflare(timeout=15)
+                        if await self._is_casehug_logged_in():
+                            return True
+                    except Exception:
+                        continue
                 last_refresh = now
 
             await asyncio.sleep(1.5)

@@ -4,7 +4,11 @@ import logging
 import os
 from typing import Iterable
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency fallback
+    def load_dotenv(*_args, **_kwargs):
+        return False
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import OperationalError
@@ -190,6 +194,20 @@ def _sync_schema():
     tables = set(inspector.get_table_names())
 
     if "skins" in tables:
+        skin_columns = {column["name"] for column in inspector.get_columns("skins")}
+        if "external_item_id" not in skin_columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE skins ADD COLUMN external_item_id VARCHAR(64)")
+                )
+                connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_skins_external_item_id "
+                        "ON skins (external_item_id)"
+                    )
+                )
+            logger.info("Added skins.external_item_id column.")
+
         with engine.begin() as connection:
             connection.execute(
                 text(

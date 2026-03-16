@@ -17,7 +17,7 @@ class HomePage:
         self.stats_row = None
         self._stats_refresh_started = False
         self._stats_snapshot = None
-        
+
     def _fetch_stats_snapshot(self):
         """Fetch dashboard counters from database."""
         db = SessionLocal()
@@ -27,14 +27,10 @@ class HomePage:
             active_accounts = len(AccountCRUD.get_active(db))
 
             total_value = (
-                db.query(func.coalesce(func.sum(Skin.estimated_price), 0.0))
-                .scalar()
-                or 0.0
+                db.query(func.coalesce(func.sum(Skin.estimated_price), 0.0)).scalar() or 0.0
             )
             total_cases = (
-                db.query(func.coalesce(func.sum(BotStatus.cases_opened_total), 0))
-                .scalar()
-                or 0
+                db.query(func.coalesce(func.sum(BotStatus.cases_opened_total), 0)).scalar() or 0
             )
 
             return (
@@ -90,13 +86,11 @@ class HomePage:
                 time.sleep(2.5)
 
         threading.Thread(target=_loop, daemon=True).start()
-    
+
     def build(self) -> ft.Container:
         """Build home page - non-blocking"""
-        # UI is rebuilt on each navigation; force first refresh to repopulate cards.
         self._stats_snapshot = None
 
-        # Create stats cards with initial empty data
         self.stats_row = ft.Row(
             [
                 self._create_stat_card("Total Accounts", "0", "group"),
@@ -104,89 +98,112 @@ class HomePage:
                 self._create_stat_card("Total Value", "$0.00", "trending_up"),
                 self._create_stat_card("Cases Opened", "0", "card_giftcard"),
             ],
-            spacing=15,
+            spacing=14,
+            run_spacing=14,
             wrap=True,
         )
-        
-        # Welcome message
+
         welcome = ft.Text(
             "Welcome to CaseHugAuto",
-            size=32,
+            size=34,
             weight="bold",
-            color="#00d4ff",
+            color="#8be9ff",
         )
-        
+
         description = ft.Text(
             "Automate your case opening process on casehug.com. Manage multiple accounts and track your skins.",
             size=14,
-            color="#888888",
+            color="#9aa7bd",
         )
-        
-        # Quick actions
+
+        button_style = ft.ButtonStyle(
+            bgcolor="#1d3f5f",
+            color="#e8f6ff",
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=ft.padding.symmetric(horizontal=18, vertical=14),
+        )
+
         quick_actions = ft.Row(
             [
                 ft.ElevatedButton(
                     "Add Account",
                     icon="add",
+                    style=button_style,
                     on_click=lambda _: self.app.navigate_to("accounts"),
                 ),
                 ft.ElevatedButton(
                     "View Skins",
                     icon="collections",
+                    style=button_style,
                     on_click=lambda _: self.app.navigate_to("skins"),
                 ),
                 ft.ElevatedButton(
                     "Settings",
                     icon="settings",
+                    style=button_style,
                     on_click=lambda _: self.app.navigate_to("settings"),
                 ),
             ],
             spacing=10,
+            wrap=True,
         )
-        
+
         self.content = ft.Column(
             [
                 welcome,
                 description,
-                ft.Divider(height=20, color="transparent"),
+                ft.Divider(height=18, color="transparent"),
                 self.stats_row,
-                ft.Divider(height=20, color="transparent"),
+                ft.Divider(height=18, color="transparent"),
                 quick_actions,
             ],
-            spacing=15,
+            spacing=12,
             alignment=ft.MainAxisAlignment.START,
             horizontal_alignment=ft.CrossAxisAlignment.START,
+            scroll=ft.ScrollMode.AUTO,
         )
-        
-        # Construct container
+
         container = ft.Container(
             content=self.content,
             expand=True,
-            padding=ft.padding.all(20),
+            padding=ft.padding.all(18),
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
+                colors=["#0d1628", "#101b31", "#0b1423"],
+            ),
+            border=ft.border.all(1, "#233854"),
+            border_radius=14,
         )
-        
-        # Initial load and periodic refresh.
+
         self._refresh_stats(update_ui=False)
         self._start_stats_refresh_loop()
 
         return container
-    
+
     def _create_stat_card(self, title: str, value: str, icon_name: str) -> ft.Card:
         """Create stat card"""
         return ft.Card(
+            elevation=3,
             content=ft.Container(
                 content=ft.Column(
                     [
-                        ft.Icon(icon_name, size=30, color="#00d4ff"),
-                        ft.Text(title, size=12, color="#888888"),
-                        ft.Text(value, size=20, weight="bold", color="white"),
+                        ft.Icon(icon_name, size=30, color="#7ed8ff"),
+                        ft.Text(title, size=12, color="#9aa7bd"),
+                        ft.Text(value, size=21, weight="bold", color="white"),
                     ],
-                    spacing=10,
+                    spacing=9,
                     alignment=ft.MainAxisAlignment.CENTER,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                padding=20,
-                width=250,
-                bgcolor="#1a1a1a",
+                padding=18,
+                width=245,
+                gradient=ft.LinearGradient(
+                    begin=ft.alignment.top_left,
+                    end=ft.alignment.bottom_right,
+                    colors=["#142238", "#101c2f"],
+                ),
+                border=ft.border.all(1, "#2a4363"),
+                border_radius=12,
             ),
         )

@@ -22,6 +22,13 @@ from ..database.db import SessionLocal
 from ..database.crud import AccountCRUD, BotStatusCRUD
 from ..models.models import BotStatus
 from .bot_logic import AutomationLogic
+from .windows_startup import (
+    disable_background_startup,
+    enable_background_startup,
+    has_legacy_background_startup,
+    is_background_startup_enabled,
+    is_windows_platform,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +40,13 @@ class BotConfig(TypedDict):
     case_open_interval_seconds: int
     max_retries: int
     auto_start_new_accounts: bool
+    auto_start_active_accounts_on_launch: bool
+    start_with_windows_headless: bool
+    telegram_bot_token: str
+    telegram_chat_id: str
+    telegram_notify_on_skin: bool
+    telegram_notify_on_error: bool
+    steam_login_max_retries: int
 
 
 class StatusPayload(TypedDict):
@@ -47,6 +61,13 @@ DEFAULT_BOT_CONFIG: BotConfig = {
     "case_open_interval_seconds": 60,
     "max_retries": 3,
     "auto_start_new_accounts": False,
+    "auto_start_active_accounts_on_launch": False,
+    "start_with_windows_headless": False,
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    "telegram_notify_on_skin": True,
+    "telegram_notify_on_error": True,
+    "steam_login_max_retries": 1,
 }
 
 CONFIG_PATH = Path("bot_settings.json")
@@ -69,6 +90,24 @@ class BotRunner:
         self._lock = threading.Lock()
         self._status_callback: Optional[StatusCallback] = None
         self._config = self._load_config()
+        self._sync_windows_startup_from_config()
+
+    def _sync_windows_startup_from_config(self):
+        if not is_windows_platform():
+            return
+
+        desired = bool(self._config.get("start_with_windows_headless", False))
+        installed = is_background_startup_enabled()
+        legacy_installed = has_legacy_background_startup()
+
+        if desired and (not installed or legacy_installed):
+            ok, message = enable_background_startup()
+            if not ok:
+                logger.warning("Could not enable startup from config: %s", message)
+        elif not desired and (installed or legacy_installed):
+            ok, message = disable_background_startup()
+            if not ok:
+                logger.warning("Could not disable startup from config: %s", message)
 
     # -------------------- callbacks & config --------------------
     def set_status_callback(self, callback: StatusCallback):
@@ -127,6 +166,54 @@ class BotRunner:
                             DEFAULT_BOT_CONFIG["auto_start_new_accounts"],
                         )
                     ),
+                    "auto_start_active_accounts_on_launch": bool(
+                        loaded.get(
+                            "auto_start_active_accounts_on_launch",
+                            DEFAULT_BOT_CONFIG["auto_start_active_accounts_on_launch"],
+                        )
+                    ),
+                    "start_with_windows_headless": bool(
+                        loaded.get(
+                            "start_with_windows_headless",
+                            DEFAULT_BOT_CONFIG["start_with_windows_headless"],
+                        )
+                    ),
+                    "telegram_bot_token": str(
+                        loaded.get(
+                            "telegram_bot_token",
+                            DEFAULT_BOT_CONFIG["telegram_bot_token"],
+                        )
+                        or ""
+                    ).strip(),
+                    "telegram_chat_id": str(
+                        loaded.get(
+                            "telegram_chat_id",
+                            DEFAULT_BOT_CONFIG["telegram_chat_id"],
+                        )
+                        or ""
+                    ).strip(),
+                    "telegram_notify_on_skin": bool(
+                        loaded.get(
+                            "telegram_notify_on_skin",
+                            DEFAULT_BOT_CONFIG["telegram_notify_on_skin"],
+                        )
+                    ),
+                    "telegram_notify_on_error": bool(
+                        loaded.get(
+                            "telegram_notify_on_error",
+                            DEFAULT_BOT_CONFIG["telegram_notify_on_error"],
+                        )
+                    ),
+                    "steam_login_max_retries": max(
+                        0,
+                        self._to_int(
+                            loaded.get(
+                                "steam_login_max_retries",
+                                DEFAULT_BOT_CONFIG["steam_login_max_retries"],
+                            ),
+                            DEFAULT_BOT_CONFIG["steam_login_max_retries"],
+                        ),
+                    ),
                 }
             )
             return cfg
@@ -144,6 +231,14 @@ class BotRunner:
             except ValueError:
                 return default
         return default
+
+    @staticmethod
+    def _to_bool(value: object, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
     def _save_config(self) -> bool:
         try:
@@ -165,36 +260,142 @@ class BotRunner:
         auto_start_raw = updates.get(
             "auto_start_new_accounts", self._config["auto_start_new_accounts"]
         )
+        auto_start_launch_raw = updates.get(
+            "auto_start_active_accounts_on_launch",
+            self._config["auto_start_active_accounts_on_launch"],
+        )
+        windows_start_raw = updates.get(
+            "start_with_windows_headless",
+            self._config["start_with_windows_headless"],
+        )
+        telegram_token_raw = updates.get(
+            "telegram_bot_token",
+            self._config["telegram_bot_token"],
+        )
+        telegram_chat_id_raw = updates.get(
+            "telegram_chat_id",
+            self._config["telegram_chat_id"],
+        )
+        telegram_notify_skin_raw = updates.get(
+            "telegram_notify_on_skin",
+            self._config["telegram_notify_on_skin"],
+        )
+        telegram_notify_error_raw = updates.get(
+            "telegram_notify_on_error",
+            self._config["telegram_notify_on_error"],
+        )
+        steam_login_max_retries_raw = updates.get(
+            "steam_login_max_retries",
+            self._config["steam_login_max_retries"],
+        )
 
         interval = self._to_int(interval_raw, self._config["case_open_interval_seconds"])
         retries = self._to_int(retries_raw, self._config["max_retries"])
 
-        if isinstance(auto_start_raw, bool):
-            auto_start = auto_start_raw
-        else:
-            auto_start = str(auto_start_raw).strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
+        auto_start = self._to_bool(auto_start_raw, self._config["auto_start_new_accounts"])
+        auto_start_launch = self._to_bool(
+            auto_start_launch_raw,
+            self._config["auto_start_active_accounts_on_launch"],
+        )
+        windows_start_enabled = self._to_bool(
+            windows_start_raw,
+            self._config["start_with_windows_headless"],
+        )
+        telegram_notify_skin = self._to_bool(
+            telegram_notify_skin_raw,
+            self._config["telegram_notify_on_skin"],
+        )
+        telegram_notify_error = self._to_bool(
+            telegram_notify_error_raw,
+            self._config["telegram_notify_on_error"],
+        )
+        telegram_bot_token = str(telegram_token_raw or "").strip()
+        telegram_chat_id = str(telegram_chat_id_raw or "").strip()
+        steam_login_max_retries = max(
+            0,
+            self._to_int(
+                steam_login_max_retries_raw,
+                self._config["steam_login_max_retries"],
+            ),
+        )
+        auto_start_launch_forced_off = False
+
+        # Avoid duplicate automation processes: GUI auto-start and headless worker
+        # should not run at the same time.
+        if windows_start_enabled and auto_start_launch:
+            auto_start_launch = False
+            auto_start_launch_forced_off = True
 
         if interval < 60:
             return False, "Interval must be at least 1 minute."
         if retries < 1:
             return False, "Max retries must be at least 1."
 
+        previous_windows_start = bool(self._config.get("start_with_windows_headless", False))
+
         self._config.update(
             {
                 "case_open_interval_seconds": interval,
                 "max_retries": retries,
                 "auto_start_new_accounts": auto_start,
+                "auto_start_active_accounts_on_launch": auto_start_launch,
+                "start_with_windows_headless": windows_start_enabled,
+                "telegram_bot_token": telegram_bot_token,
+                "telegram_chat_id": telegram_chat_id,
+                "telegram_notify_on_skin": telegram_notify_skin,
+                "telegram_notify_on_error": telegram_notify_error,
+                "steam_login_max_retries": steam_login_max_retries,
             }
         )
 
         if not self._save_config():
             return False, "Failed to save bot settings."
+
+        if (
+            "start_with_windows_headless" in updates
+            and windows_start_enabled != previous_windows_start
+        ):
+            ok, startup_msg = self.configure_windows_startup(
+                windows_start_enabled,
+                persist=False,
+            )
+            if not ok:
+                self._config["start_with_windows_headless"] = previous_windows_start
+                self._save_config()
+                return False, startup_msg
+            suffix = (
+                " GUI auto-start was disabled because headless startup is enabled."
+                if auto_start_launch_forced_off
+                else ""
+            )
+            return True, f"Bot settings updated. {startup_msg}{suffix}"
+
+        if auto_start_launch_forced_off:
+            return (
+                True,
+                "Bot settings updated. GUI auto-start was disabled because headless startup is enabled.",
+            )
+
         return True, "Bot settings updated."
+
+    def get_windows_startup_state(self) -> bool:
+        if not is_windows_platform():
+            return False
+        return is_background_startup_enabled()
+
+    def configure_windows_startup(self, enabled: bool, *, persist: bool = True) -> Tuple[bool, str]:
+        enabled = bool(enabled)
+
+        if enabled:
+            ok, message = enable_background_startup()
+        else:
+            ok, message = disable_background_startup()
+
+        if ok and persist:
+            self._config["start_with_windows_headless"] = enabled
+            self._save_config()
+
+        return ok, message
 
     # -------------------- lifecycle --------------------
     def _cleanup_finished_workers(self):
@@ -216,6 +417,31 @@ class BotRunner:
         with self._lock:
             self._cleanup_finished_workers()
             return list(self._running.keys())
+
+    def start_active_accounts(self) -> Tuple[int, int, list[str]]:
+        started_count = 0
+        already_running_count = 0
+        errors: list[str] = []
+
+        db = SessionLocal()
+        try:
+            active_accounts = AccountCRUD.get_active(db)
+        finally:
+            db.close()
+
+        for account in active_accounts:
+            ok, message = self.start_account(account.id)
+            if ok:
+                started_count += 1
+                continue
+
+            if "already running" in message.lower():
+                already_running_count += 1
+            else:
+                account_label = (account.account_name or "").strip() or str(account.id)
+                errors.append(f"{account_label}: {message}")
+
+        return started_count, already_running_count, errors
 
     def start_account(self, account_id: int) -> Tuple[bool, str]:
         with self._lock:
@@ -286,52 +512,73 @@ class BotRunner:
             _status_cb(
                 account_id,
                 (
-                    f"Auto-loop enabled. Fallback check interval: {interval_minutes} minute(s). "
-                    f"After case opening, next run waits {CASE_COOLDOWN_HOURS}h."
+                    f"Auto-loop enabled. Cooldown is checked every {interval_minutes} minute(s). "
+                    f"Automation runs automatically once {CASE_COOLDOWN_HOURS}h pass "
+                    "from the last opened case."
                 ),
                 "info",
             )
 
-            # Continuous polling loop: keep checking/opening when cooldown ends.
+            # Continuous polling loop:
+            # - if 24h cooldown is not passed yet -> recheck only every interval
+            # - if 24h cooldown is passed -> run automation immediately
             while not stop_event.is_set():
                 try:
                     bot_status = BotStatusCRUD.get_or_create(db, account_id)
                     now_utc = datetime.utcnow()
-
-                    if bot_status.last_cases_opened_at:
-                        cooldown_due_at = bot_status.last_cases_opened_at + timedelta(
-                            hours=CASE_COOLDOWN_HOURS
-                        )
+                    last_opened_at = bot_status.last_cases_opened_at
+                    if last_opened_at:
+                        cooldown_due_at = last_opened_at + timedelta(hours=CASE_COOLDOWN_HOURS)
                         if cooldown_due_at > now_utc:
-                            existing_due = bot_status.next_scheduled_run
-                            if (
-                                existing_due is None
-                                or abs((existing_due - cooldown_due_at).total_seconds()) > 1.0
-                            ):
-                                bot_status.next_scheduled_run = cooldown_due_at
-                                db.commit()
-                                db.refresh(bot_status)
+                            remaining_seconds = max(
+                                0, int((cooldown_due_at - now_utc).total_seconds())
+                            )
+                            remaining_minutes = max(1, int((remaining_seconds + 59) // 60))
+                            due_label = cooldown_due_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                            _status_cb(
+                                account_id,
+                                (
+                                    f"24h cooldown not passed yet. Remaining ~{remaining_minutes} "
+                                    f"minute(s). Eligible at {due_label}. "
+                                    f"Rechecking in {interval_minutes} minute(s)."
+                                ),
+                                "info",
+                            )
+                            try:
+                                BotStatusCRUD.schedule_next_run_at(db, account_id, cooldown_due_at)
+                            except Exception as exc:
+                                logger.debug(
+                                    "Could not persist cooldown due timestamp for account %s: %s",
+                                    account_id,
+                                    exc,
+                                )
+                            if stop_event.wait(interval_seconds):
+                                _status_cb(account_id, "Worker stopped.", "stopped")
+                                break
+                            continue
 
-                    wait_until = bot_status.next_scheduled_run
-                    if wait_until and wait_until > now_utc:
-                        wait_seconds = max(1, int((wait_until - now_utc).total_seconds()))
-                        due_label = wait_until.strftime("%Y-%m-%d %H:%M:%S UTC")
-                        _status_cb(
+                    # Cooldown is passed (or account has no recorded last open).
+                    # Remove stale next-check marker so UI doesn't show an outdated future run.
+                    try:
+                        BotStatusCRUD.clear_next_check(db, account_id)
+                    except Exception as exc:
+                        logger.debug(
+                            "Could not clear next_scheduled_run for account %s: %s",
                             account_id,
-                            f"Cooldown active. Next run at {due_label}.",
-                            "info",
+                            exc,
                         )
-                        if stop_event.wait(wait_seconds):
-                            _status_cb(account_id, "Worker stopped.", "stopped")
-                            break
                 except Exception as exc:
                     logger.debug(
-                        "Could not evaluate cooldown schedule for account %s: %s",
+                        "Could not evaluate 24h cooldown for account %s: %s",
                         account_id,
                         exc,
                     )
+                    if stop_event.wait(interval_seconds):
+                        _status_cb(account_id, "Worker stopped.", "stopped")
+                        break
+                    continue
 
-                automation = AutomationLogic(db, account_id, stop_event, _status_cb)
+                automation = AutomationLogic(db, account_id, stop_event, _status_cb, runtime_config=self._config.copy())
                 automation.run()
                 cycle_status = getattr(automation, "last_result_status", "unknown")
 
@@ -344,36 +591,50 @@ class BotRunner:
                     opened_cases_count = int(
                         getattr(automation, "last_opened_cases_count", 0) or 0
                     )
-                    try:
-                        if opened_cases_count > 0:
-                            BotStatusCRUD.schedule_next_check(
+                    if opened_cases_count > 0:
+                        try:
+                            status_after_run = BotStatusCRUD.get_or_create(db, account_id)
+                            cooldown_anchor = status_after_run.last_cases_opened_at or datetime.utcnow()
+                            BotStatusCRUD.schedule_next_run_at(
                                 db,
                                 account_id,
-                                CASE_COOLDOWN_HOURS * 3600,
+                                cooldown_anchor + timedelta(hours=CASE_COOLDOWN_HOURS),
                             )
-                        else:
-                            BotStatusCRUD.schedule_next_check(db, account_id, interval_seconds)
-                    except Exception as exc:
-                        logger.debug(
-                            "Could not persist next_scheduled_run for account %s: %s",
-                            account_id,
-                            exc,
-                        )
-                    if opened_cases_count > 0:
+                        except Exception as exc:
+                            logger.debug(
+                                "Could not persist cooldown reset timestamp for account %s: %s",
+                                account_id,
+                                exc,
+                            )
                         _status_cb(
                             account_id,
                             (
                                 f"Opened {opened_cases_count} case(s). "
-                                f"Next run in {CASE_COOLDOWN_HOURS}h."
+                                f"Cooldown reset ({CASE_COOLDOWN_HOURS}h). "
+                                f"Rechecking in {interval_minutes} minute(s)."
                             ),
                             "success",
                         )
+                        # Skip immediate extra sleep; next loop will hit cooldown gate and sleep once.
+                        continue
                     else:
+                        try:
+                            # Keep scheduler heartbeat in sync with periodic polling.
+                            BotStatusCRUD.schedule_next_check(db, account_id, interval_seconds)
+                        except Exception as exc:
+                            logger.debug(
+                                "Could not persist next_scheduled_run for account %s: %s",
+                                account_id,
+                                exc,
+                            )
                         _status_cb(
                             account_id,
                             f"Cycle completed. Rechecking in {interval_minutes} minute(s)...",
                             "info",
                         )
+                        if stop_event.wait(interval_seconds):
+                            _status_cb(account_id, "Worker stopped.", "stopped")
+                            break
                 else:
                     retry_count += 1
                     try:
@@ -395,6 +656,9 @@ class BotRunner:
                             "Maximum retries reached. Worker stopped.",
                             "error",
                         )
+                        break
+                    if stop_event.wait(interval_seconds):
+                        _status_cb(account_id, "Worker stopped.", "stopped")
                         break
                  
         except Exception as exc:

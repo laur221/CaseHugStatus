@@ -249,7 +249,7 @@ class CasehugBotNodriver:
             try:
                 user32 = ctypes.windll.user32
                 
-                # Găsește și minimizează toate ferestrele Chrome
+                # Find and minimize all ferestrele Chrome
                 def enum_callback(hwnd, _):
                     if user32.IsWindowVisible(hwnd):
                         length = user32.GetWindowTextLengthW(hwnd)
@@ -258,21 +258,21 @@ class CasehugBotNodriver:
                             user32.GetWindowTextW(hwnd, buffer, length + 1)
                             title = buffer.value
                             
-                            # Minimizează dacă e Chrome
+                            # Minimize if e Chrome
                             if 'Chrome' in title or 'casehug.com' in title.lower():
                                 user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
                     return True
                 
                 EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
                 user32.EnumWindows(EnumWindowsProc(enum_callback), 0)
-                print(f"   🪟 Fereastră Chrome minimizată în taskbar")
+                print(f"   🪟 Chrome window minimized to taskbar")
             except Exception as e:
                 print(f"   ⚠️ Nu s-a putut minimiza: {e}")
         
-        print(f"   ✅ Browser Nodriver gata pentru {account_name}")
-        print(f"   🛡️  Cloudflare va fi trecut automat (avg 11.22s)")
+        print(f"   ✅ Browser Nodriver ready for {account_name}")
+        print(f"   🛡️  Cloudflare will be bypassed automatically (avg 11.22s)")
         
-        # Așteaptă stabilizarea conexiunii browser/WebSocket
+        # Wait stabilizarea conexiunii browser/WebSocket
         await asyncio.sleep(2)
         
         return page, browser
@@ -366,24 +366,24 @@ class CasehugBotNodriver:
             return None
     
     async def check_cloudflare(self, page):
-        """Verifică dacă Cloudflare a fost trecut cu succes (cookies deja injectate în Docker)"""
+        """Check if Cloudflare was successfully passed (cookies already injected in Docker)"""
         try:
-            # În Docker: Cookies deja injectate în open_free_case(), doar verificăm
-            # Pe Windows: Nodriver rezolvă automat
+            # In Docker: Cookies already injected in open_free_case(), only check
+            # Pe Windows: Nodriver solves automat
             is_docker = os.environ.get('DISPLAY') == ':99'
             
             if is_docker and hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
-                print(f"   🐳 Verific dacă Cloudflare a fost trecut cu FlareSolverr cookies...")
-                await asyncio.sleep(2)  # Așteaptă scurt ca pagina să se încarce complet
+                print(f"   🐳 Checking if Cloudflare was bypassed with FlareSolverr cookies...")
+                await asyncio.sleep(2)  # Wait briefly for the page to fully load
                 
                 content = await page.get_content()
                 has_cloudflare = 'cloudflare' in content.lower() or 'checking your browser' in content.lower()
                 
                 if has_cloudflare:
-                    print("   ❌ Cloudflare ÎNCĂ prezent după injectare cookies FlareSolverr")
+                    print("   ❌ Cloudflare is STILL present after FlareSolverr cookie injection")
                     return False
                 else:
-                    print("   ✅ Cloudflare trecut cu FlareSolverr cookies!")
+                    print("   ✅ Cloudflare bypassed with FlareSolverr cookies!")
                     return True
             
             # On Windows: Nodriver solves automatically - wait longer
@@ -423,7 +423,7 @@ class CasehugBotNodriver:
             return True  # Continue anyway
     
     async def check_steam_login(self, page, account_name, retry_attempt=0):
-        """Verifică dacă utilizatorul este logat cu Steam (verifică balanta în header)"""
+        """Check whether the user is logged in with Steam (checks balance in header)"""
         try:
             try:
                 self.log_steam_debug(account_name, "check_start", {
@@ -435,69 +435,69 @@ class CasehugBotNodriver:
 
             content = await page.get_content()
             
-            # Verifică dacă există balanta în header (indicator sigur că e logat)
+            # Check if exists balance in header (indicator sigur that e logat)
             has_balance = 'data-testid="header-account-balance"' in content
             
             if has_balance:
-                # Extrage balanta DOAR din secțiunea header-account-balance
+                # Extract balance ONLY from header-account-balance section
                 import re
-                # Caută secțiunea header-account-balance și extrage balanța de acolo
+                # Search header-account-balance section and extract balance from there
                 header_match = re.search(r'data-testid="header-account-balance"[^>]*>.*?<span\s+data-testid="format-price"[^>]*>(\$[\d.]+)</span>', content, re.DOTALL)
                 if header_match:
                     balance = header_match.group(1)
-                    print(f"   ✅ {account_name} este logat cu Steam (Balanță: {balance})")
+                    print(f"   ✅ {account_name} is logged in with Steam (Balance: {balance})")
                     self.log_steam_debug(account_name, "already_logged_in", {
                         "balance": balance,
                         "retry_attempt": retry_attempt
                     })
                 else:
-                    print(f"   ✅ {account_name} este logat cu Steam")
+                    print(f"   ✅ {account_name} is logged in with Steam")
                     self.log_steam_debug(account_name, "already_logged_in", {
                         "balance": None,
                         "retry_attempt": retry_attempt
                     })
                 return True
             else:
-                # Nu există balanță → nu e logat, încearcă auto-login
-                print(f"\n⚠️  {account_name} NU este logat cu Steam!")
-                print(f"   🔄 Încerc auto-login cu Steam...")
+                # Nu exists balance → is not logged in, try auto-login
+                print(f"\n⚠️  {account_name} NU is logged in with Steam!")
+                print(f"   🔄 Attempting Steam auto-login...")
                 
                 try:
-                    # PASUL 1: Caută și click pe butonul "steam login"
+                    # STEP 1: Search and click on button "steam login"
                     login_button = None
                     
-                    # Caută buton care conține label cu textul "steam login"
+                    # Search button that contains label text "steam login"
                     buttons = await page.select_all('button')
                     for btn in buttons:
                         try:
                             btn_html = await btn.get_html()
                             
-                            # Verifică dacă HTML-ul conține exact label cu "steam login"
+                            # Check if HTML contains exact label with "steam login"
                             if 'ri-steam-fill' in btn_html and 'steam login' in btn_html.lower():
                                 login_button = btn
-                                print(f"   ✓ Găsit buton 'steam login'")
+                                print(f"   ✓ Found 'steam login' button")
                                 break
                         except:
                             continue
                     
                     if not login_button:
-                        print(f"   ❌ Nu am găsit butonul 'steam login'")
+                        print(f"   ❌ Could not find 'steam login' button")
                         self.log_steam_debug(account_name, "login_button_missing", {
                             "retry_attempt": retry_attempt,
                             "current_url": page.url
                         })
                         return False
                     
-                    # Click pe butonul de login
+                    # Click the button de login
                     await login_button.scroll_into_view()
                     await asyncio.sleep(1)
                     await login_button.click()
-                    print(f"   ✓ Click pe 'steam login'")
+                    print(f"   ✓ Click on 'steam login'")
                     
-                    # Așteaptă să apară modal-ul cu checkbox-uri
+                    # Wait to appear modal with checkbox-uri
                     await asyncio.sleep(3)
                     
-                    # PASUL 2: Bifează checkbox-urile
+                    # STEP 2: Tick checkbox-urile
                     print(f"   🔄 Bifez checkbox-urile...")
                     
                     # Checkbox 1: Terms and Privacy Policy
@@ -508,9 +508,9 @@ class CasehugBotNodriver:
                             print(f"   ✓ Bifat: Terms and Privacy Policy")
                             await asyncio.sleep(0.5)
                         else:
-                            print(f"   ⚠️  Nu am găsit checkbox Terms")
+                            print(f"   ⚠️  Could not find checkbox Terms")
                     except Exception as e:
-                        print(f"   ⚠️  Eroare checkbox1: {e}")
+                        print(f"   ⚠️  Checkbox1 error: {e}")
                     
                     # Checkbox 2: 18 years or older
                     try:
@@ -520,37 +520,37 @@ class CasehugBotNodriver:
                             print(f"   ✓ Bifat: 18 years or older")
                             await asyncio.sleep(0.5)
                         else:
-                            print(f"   ⚠️  Nu am găsit checkbox Age")
+                            print(f"   ⚠️  Could not find checkbox Age")
                     except Exception as e:
-                        print(f"   ⚠️  Eroare checkbox2: {e}")
+                        print(f"   ⚠️  Checkbox2 error: {e}")
                     
-                    # PASUL 3: Click pe butonul "log with steam"
+                    # STEP 3: Click the button "log with steam"
                     try:
                         submit_button = await page.query_selector('button[data-testid="sign-in-button"]')
                         if submit_button:
                             await asyncio.sleep(1)
                             await submit_button.click()
-                            print(f"   ✓ Click pe 'log with steam'")
+                            print(f"   ✓ Click on 'log with steam'")
                         else:
-                            print(f"   ❌ Nu am găsit butonul 'log with steam'")
+                            print(f"   ❌ Could not find button 'log with steam'")
                             return False
                     except Exception as e:
-                        print(f"   ❌ Eroare click submit: {e}")
+                        print(f"   ❌ Submit click error: {e}")
                         return False
                     
-                    # PASUL 4: Switch la tab-ul Steam și click pe "Sign In"
-                    print(f"   ⏳ Aștept deschidere popup Steam (5s)...")
+                    # STEP 4: Switch at tab Steam and click on "Sign In"
+                    print(f"   ⏳ Waiting for Steam popup to open (5s)...")
                     await asyncio.sleep(5)
                     
                     try:
-                        # Găsește toate tab-urile deschise
+                        # Find all tab-urile deschise
                         all_tabs = page.browser.tabs
-                        print(f"   📑 Găsite {len(all_tabs)} tab-uri deschise")
+                        print(f"   📑 Found {len(all_tabs)} tab-uri deschise")
                         
                         steam_tab = None
                         has_about_tab = False
                         tab_urls = []
-                        # Caută tab-ul cu Steam
+                        # Search tab with Steam
                         for tab in all_tabs:
                             try:
                                 tab_url = tab.url.lower()
@@ -559,7 +559,7 @@ class CasehugBotNodriver:
                                     has_about_tab = True
                                 if 'steam' in tab_url:
                                     steam_tab = tab
-                                    print(f"   ✓ Găsit tab Steam: {tab.url[:50]}...")
+                                    print(f"   ✓ Found Steam tab: {tab.url[:50]}...")
                                     break
                             except:
                                 continue
@@ -573,31 +573,31 @@ class CasehugBotNodriver:
                         })
                         
                         if steam_tab:
-                            # Switch la tab-ul Steam
+                            # Switch at tab Steam
                             await steam_tab.activate()
                             await asyncio.sleep(2)
                             
-                            # Caută butonul "Sign In"
+                            # Search button "Sign In"
                             signin_button = await steam_tab.query_selector('input#imageLogin')
                             
                             if signin_button:
                                 await signin_button.click()
-                                print(f"   ✓ Click pe 'Sign In' în popup Steam")
+                                print(f"   ✓ Clicked 'Sign In' in Steam popup")
                                 await asyncio.sleep(5)
                             else:
-                                print(f"   ⏳ Nu am găsit butonul Sign In, aștept autentificare automată...")
+                                print(f"   ⏳ Could not find Sign In button, waiting for automatic authentication...")
                                 await asyncio.sleep(10)
                         else:
                             if has_about_tab:
-                                print(f"   ⚠️  Popup Steam a deschis tab temporar (about:*). Aștept și re-verific...")
+                                print(f"   ⚠️  Popup Steam a opened tab temporar (about:*). Waiting and re-checking...")
                                 await asyncio.sleep(6)
-                                # Re-scan tabs după scurtă așteptare
+                                # Re-scan tabs after short wait
                                 all_tabs_retry = page.browser.tabs
                                 for tab in all_tabs_retry:
                                     try:
                                         if 'steam' in tab.url.lower():
                                             steam_tab = tab
-                                            print(f"   ✓ Găsit tab Steam la re-verificare: {tab.url[:50]}...")
+                                            print(f"   ✓ Found Steam tab at re-check: {tab.url[:50]}...")
                                             break
                                     except:
                                         continue
@@ -607,54 +607,54 @@ class CasehugBotNodriver:
                                     signin_button = await steam_tab.query_selector('input#imageLogin')
                                     if signin_button:
                                         await signin_button.click()
-                                        print(f"   ✓ Click pe 'Sign In' în popup Steam (retry)")
+                                        print(f"   ✓ Clicked 'Sign In' in Steam popup (retry)")
                                         self.log_steam_debug(account_name, "steam_signin_clicked_retry", {
                                             "retry_attempt": retry_attempt,
                                             "steam_url": steam_tab.url
                                         })
                                         await asyncio.sleep(5)
                                     else:
-                                        print(f"   ⏳ Nu am găsit butonul Sign In după re-verificare")
+                                        print(f"   ⏳ Could not find Sign In button after re-check")
                                         self.log_steam_debug(account_name, "steam_signin_button_missing_retry", {
                                             "retry_attempt": retry_attempt,
                                             "steam_url": steam_tab.url
                                         })
                                         await asyncio.sleep(10)
                                 else:
-                                    print(f"   ⏳ Încă nu găsesc tab-ul Steam, continui cu verificarea login...")
+                                    print(f"   ⏳ Still cannot find Steam tab, continuing login check...")
                                     self.log_steam_debug(account_name, "steam_tab_missing_after_about", {
                                         "retry_attempt": retry_attempt,
                                         "current_url": page.url
                                     })
                                     await asyncio.sleep(10)
                             else:
-                                print(f"   ⏳ Nu am găsit tab-ul Steam, aștept autentificare automată...")
+                                print(f"   ⏳ Could not find Steam tab, waiting for automatic authentication...")
                                 self.log_steam_debug(account_name, "steam_tab_missing", {
                                     "retry_attempt": retry_attempt,
                                     "current_url": page.url
                                 })
                                 await asyncio.sleep(15)
                     except Exception as e:
-                        print(f"   ⚠️  Eroare switch tab Steam: {e}")
+                        print(f"   ⚠️  Steam tab switch error: {e}")
                         self.log_steam_debug(account_name, "steam_tab_switch_error", {
                             "retry_attempt": retry_attempt,
                             "error": str(e)
                         })
                         await asyncio.sleep(15)
                     
-                    # Așteaptă redirect înapoi la CaseHug
-                    print(f"   ⏳ Aștept redirect la CaseHug (15s)...")
+                    # Wait redirect back at CaseHug
+                    print(f"   ⏳ Waiting for redirect back to CaseHug (15s)...")
                     await asyncio.sleep(15)
                     
-                    # Verifică dacă suntem pe casehug.com
+                    # Check if suntem on casehug.com
                     current_url = page.url
                     if 'casehug.com' not in current_url:
-                        print(f"   🔄 Navighez înapoi la /free-cases...")
+                        print(f"   🔄 Navigating back to /free-cases...")
                         await page.get('https://casehug.com/free-cases')
                         await asyncio.sleep(3)
                     
                 except Exception as e:
-                    print(f"   ❌ Eroare la auto-login: {e}")
+                    print(f"   ❌ Auto-login error: {e}")
                     self.log_steam_debug(account_name, "auto_login_exception", {
                         "retry_attempt": retry_attempt,
                         "error": str(e),
@@ -664,7 +664,7 @@ class CasehugBotNodriver:
                     traceback.print_exc()
                     return False
                 
-                # Verifică din nou după login
+                # Check again after login
                 await asyncio.sleep(2)
                 content = await page.get_content()
                 has_balance_after = 'data-testid="header-account-balance"' in content
@@ -677,9 +677,9 @@ class CasehugBotNodriver:
                             current_url = ''
 
                         if current_url.startswith('about:') or 'steam' in current_url:
-                            print(f"   ⚠️  Detectat tab/pagină temporară ({current_url}). Reîncerc auto-login o singură dată...")
+                            print(f"   ⚠️  Detectat tab/page temporary ({current_url}). Retry auto-login o single time...")
                         else:
-                            print(f"   ⚠️  Auto-login nu a reușit. Reîncerc o singură dată...")
+                            print(f"   ⚠️  Auto-login was not successful. Retry o single time...")
 
                         self.log_steam_debug(account_name, "login_failed_retrying", {
                             "retry_attempt": retry_attempt,
@@ -694,26 +694,26 @@ class CasehugBotNodriver:
 
                         return await self.check_steam_login(page, account_name, retry_attempt + 1)
 
-                    print(f"   ❌ Auto-login nu a reușit după retry. Contul va fi sărit.")
+                    print(f"   ❌ Auto-login failed after retry. The account will be skipped.")
                     self.log_steam_debug(account_name, "login_failed_after_retry", {
                         "retry_attempt": retry_attempt,
                         "current_url": (page.url if page else "")
                     })
                     return False
                 else:
-                    # Extrage balanta
+                    # Extract balance
                     import re
                     header_match = re.search(r'data-testid="header-account-balance"[^>]*>.*?<span\s+data-testid="format-price"[^>]*>(\$[\d.]+)</span>', content, re.DOTALL)
                     if header_match:
                         balance = header_match.group(1)
-                        print(f"   ✅ Auto-login reușit pentru {account_name}! (Balanță: {balance})")
+                        print(f"   ✅ Auto-login successful for {account_name}! (Balance: {balance})")
                         self.log_steam_debug(account_name, "auto_login_success", {
                             "retry_attempt": retry_attempt,
                             "balance": balance,
                             "current_url": page.url
                         })
                     else:
-                        print(f"   ✅ Auto-login reușit pentru {account_name}!")
+                        print(f"   ✅ Auto-login successful for {account_name}!")
                         self.log_steam_debug(account_name, "auto_login_success", {
                             "retry_attempt": retry_attempt,
                             "balance": None,
@@ -722,60 +722,60 @@ class CasehugBotNodriver:
                     return True
                 
         except Exception as e:
-            print(f"   ⚠️  Eroare verificare login: {e}")
+            print(f"   ⚠️  Login verification error: {e}")
             self.log_steam_debug(account_name, "check_exception", {
                 "retry_attempt": retry_attempt,
                 "error": str(e),
                 "current_url": (page.url if page else "")
             })
-            return True  # Continuăm oricum
+            return True  # Continue oricum
     
     async def check_available_cases(self, page, account_name):
-        """Verifică ce case-uri sunt disponibile pe https://casehug.com/free-cases"""
+        """Check which cases are available on https://casehug.com/free-cases"""
         try:
-            print(f"\n🔍 Verific case-uri disponibile pentru {account_name}...")
+            print(f"\n🔍 Checking available cases for {account_name}...")
             
-            # Navighează la pagina free-cases
+            # Navigate to the free-cases page
             free_cases_url = "https://casehug.com/free-cases"
             print(f"   🌐 Accesez: {free_cases_url}")
             
             await page.get(free_cases_url)
             await asyncio.sleep(3)
             
-            # Verifică dacă suntem pe site-ul corect
+            # Check if suntem on site corect
             current_url = page.url
             if "casehug.com/free-cases" in current_url:
-                print(f"   ✅ Site încărcat corect: {current_url}")
+                print(f"   ✅ Site loaded correctly: {current_url}")
             else:
-                print(f"   ⚠️  WARNING: Site incorect! Așteptat 'casehug.com/free-cases', am ajuns pe: {current_url}")
-                # Încearcă din nou
+                print(f"   ⚠️  WARNING: Wrong page. Expected 'casehug.com/free-cases', landed on: {current_url}")
+                # Try again
                 await page.get(free_cases_url)
                 await asyncio.sleep(3)
                 current_url = page.url
                 if "casehug.com/free-cases" in current_url:
-                    print(f"   ✅ A doua încercare reușită: {current_url}")
+                    print(f"   ✅ Second attempt succeeded: {current_url}")
                 else:
-                    print(f"   ❌ Nu am reușit să ajung pe free-cases, opresc verificarea")
+                    print(f"   ❌ Could not reach free-cases, stopping check")
                     return []
             
-            # Verifică Cloudflare
+            # Check Cloudflare
             cloudflare_ok = await self.check_cloudflare(page)
             
-            # Așteaptă ca pagina să se încarce complet
+            # Wait for the page to fully load
             await asyncio.sleep(2)
             
-            # Verifică dacă utilizatorul este logat cu Steam
+            # Check whether the user is logged in with Steam
             is_logged_in = await self.check_steam_login(page, account_name)
             
-            # Așteaptă după verificare login
+            # Wait after check login
             await asyncio.sleep(2)
             
-            # Extrage HTML-ul paginii
+            # Extract page HTML
             content = await page.get_content()
             
             available_cases = []
             
-            # Definește case-urile în ordinea nivelului (pentru verificare inteligentă)
+            # Define cases by level order (for smart checking)
             # Format: (case_name, required_level)
             level_cases_order = [
                 ("wood", 0),
@@ -793,7 +793,7 @@ class CasehugBotNodriver:
                 ("immortal", 120)
             ]
             
-            # Verifică fiecare case specific după link-ul său
+            # Check fiecare case specific after link its
             case_urls = {
                 "discord": 'href="/free-cases/discord"',
                 "steam": 'href="/free-cases/steam"',
@@ -812,11 +812,11 @@ class CasehugBotNodriver:
                 "immortal": 'href="/free-cases/immortal"'
             }
             
-            # Verifică fiecare case
-            # 1. Discord și Steam se verifică întotdeauna (nu depind de nivel)
-            # 2. Level cases se verifică în ordine, cu STOP la primul locked din cauza nivelului
+            # Check fiecare case
+            # 1. Always check Discord and Steam (they do not depend on level)
+            # 2. Check level-based cases in order, STOP at first one locked by level
             
-            # Verifică Discord și Steam (mereu disponibile, nu depind de nivel)
+            # Check Discord and Steam (always available, not level-dependent)
             for case_type in ["discord", "steam"]:
                 if case_type not in case_urls:
                     continue
@@ -825,41 +825,41 @@ class CasehugBotNodriver:
                 case_pos = content.find(case_url_marker)
                 
                 if case_pos == -1:
-                    print(f"   ⚠️  {case_type.upper()} - nu a fost găsit pe pagină")
+                    print(f"   ⚠️  {case_type.upper()} - was not found on page")
                     continue
                 
-                # Extrage secțiunea (500 înainte, 2000 după pentru context complet)
+                # Extract section (500 before, 2000 after for full context)
                 section_start = max(0, case_pos - 500)
                 section_end = min(len(content), case_pos + 2000)
                 case_section = content[section_start:section_end]
                 
-                # Verifică dacă e pe cooldown
+                # Check if e on cooldown
                 has_timer = False
                 if 'data-testid="badge"' in case_section and 'ri-timer-line' in case_section:
                     import re
                     time_pattern = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', case_section)
                     if time_pattern:
                         time_str = time_pattern.group(0)
-                        print(f"   ⏰ {case_type.upper()} - pe cooldown (mai are {time_str})")
+                        print(f"   ⏰ {case_type.upper()} - on cooldown (remaining {time_str})")
                         has_timer = True
                 
                 if has_timer:
-                    continue  # Skip acest case
+                    continue  # Skip this case
                 
-                # Verifică dacă e blocat din cauza task-urilor
-                has_lock_icon = 'si-ch-lock' in case_section
+                # Check if it is locked due to incomplete tasks
+                has_lock_icon = 'and-ch-lock' in case_section
                 has_disabled_button = ('disabled=""' in case_section or '<button disabled' in case_section)
                 is_case_locked = 'CASE LOCKED' in case_section or 'Case Locked' in case_section
                 
                 if has_lock_icon or (has_disabled_button and is_case_locked):
-                    print(f"   🔒 {case_type.upper()} - blocat (task incomplete)")
+                    print(f"   🔒 {case_type.upper()} - locked (task incomplete)")
                     continue
                 
                 if has_disabled_button and not has_timer:
-                    print(f"   ⚠️  {case_type.upper()} - buton disabled")
+                    print(f"   ⚠️  {case_type.upper()} - button disabled")
                     continue
                 
-                # Verifică dacă are buton Open activ
+                # Check if are button Open activ
                 has_open_button = False
                 if '>Open<' in case_section:
                     open_positions = []
@@ -882,38 +882,38 @@ class CasehugBotNodriver:
                 
                 if has_open_button:
                     available_cases.append(case_type)
-                    print(f"   ✅ {case_type.upper()} - disponibil")
+                    print(f"   ✅ {case_type.upper()} - available")
                 else:
-                    print(f"   ⏳ {case_type.upper()} - status neclar")
+                    print(f"   ⏳ {case_type.upper()} - unclear status")
             
-            # Verifică level cases în ordine (wood → iron → bronze → etc.)
-            # STOP la primul case care nu apare în pagină (locked din cauza nivelului)
-            print(f"\\n   📊 Verificare case-uri bazate pe nivel...")
+            # Check level cases in ordine (wood → iron → bronze → etc.)
+            # STOP at first case that does not appear on page (locked by level)
+            print(f"\\n   📊 Check level-based cases...")
             for case_type, required_level in level_cases_order:
                 if case_type not in case_urls:
                     continue
                     
                 case_url_marker = case_urls[case_type]
                 
-                # Verifică dacă case-ul apare în pagină
+                # Check if case apare in page
                 case_pos = content.find(case_url_marker)
                 
                 if case_pos == -1:
-                    # Case-ul NU apare în pagină → LOCKED din cauza nivelului
-                    # Toate case-urile următoare sunt și ele locked
-                    print(f"   🔒 {case_type.upper()} (nivel {required_level}) - locked din cauza nivelului")
-                    print(f"   🛑 STOP: Toate case-urile următoare sunt locked")
-                    break  # STOP - nu mai verifica case-urile următoare
+                    # Case does NOT appear on page -> LOCKED due to level requirement
+                    # All next cases are also locked
+                    print(f"   🔒 {case_type.upper()} (level {required_level}) - locked due to level requirement")
+                    print(f"   🛑 STOP: All next cases are locked")
+                    break  # STOP - do not check next cases
                 
-                # Case-ul apare în pagină → verifică statusul
-                # IMPORTANT: Extrage secțiunea DOAR DUPĂ URL-ul case-ului 
-                # (nu înainte, ca să nu prindem date de la case-ul anterior)
-                section_start = case_pos  # Start exact de la URL
-                section_end = min(len(content), case_pos + 2000)  # 2000 după URL
+                # Case-ul apare in page → check statusul
+                # IMPORTANT: Extract section ONLY AFTER case URL 
+                # (nu before, ca to nu prindem date de at case anterior)
+                section_start = case_pos  # Start exact de at URL
+                section_end = min(len(content), case_pos + 2000)  # 2000 after URL
                 case_section = content[section_start:section_end]
                 
-                # 1. Verifică indicatori de status
-                has_lock_icon = 'si-ch-lock' in case_section
+                # 1. Check indicatori de status
+                has_lock_icon = 'and-ch-lock' in case_section
                 has_disabled_button = ('disabled=""' in case_section or '<button disabled' in case_section)
                 has_timer = False
                 if 'data-testid="badge"' in case_section and 'ri-timer-line' in case_section:
@@ -923,27 +923,27 @@ class CasehugBotNodriver:
                         has_timer = True
                         time_str = time_pattern.group(0)
                 
-                # 2. LOGICĂ DE DECIZIE pentru case-uri bazate pe nivel:
-                # - LOCK (cu sau fără timer) → NIVEL INSUFICIENT → BREAK
-                # - Doar TIMER (fără lock) → PE COOLDOWN → CONTINUE
+                # 2. DECISION LOGIC for level-based cases:
+                # - LOCK (with or without timer) -> INSUFFICIENT LEVEL -> BREAK
+                # - Doar TIMER (without lock) → PE COOLDOWN → CONTINUE
                 
-                # Dacă are LOCK (indiferent de timer) → NIVEL INSUFICIENT
+                # If LOCK is present (regardless of timer) -> INSUFFICIENT LEVEL
                 if has_lock_icon:
-                    print(f"   🔒 {case_type.upper()} (nivel {required_level}) - nivel insuficient")
-                    print(f"   🛑 STOP: Toate case-urile următoare necesită nivel mai mare")
-                    break  # STOP verificarea
+                    print(f"   🔒 {case_type.upper()} (level {required_level}) - level insufficient")
+                    print(f"   🛑 STOP: All next cases require a higher level")
+                    break  # STOP checking
                 
-                # Dacă are doar TIMER (fără lock) → PE COOLDOWN
+                # If are only TIMER (without lock) → PE COOLDOWN
                 if has_timer and not has_lock_icon:
-                    print(f"   ⏰ {case_type.upper()} (nivel {required_level}) - pe cooldown ({time_str})")
-                    continue  # Continuă verificarea - următoarele pot fi disponibile
+                    print(f"   ⏰ {case_type.upper()} (level {required_level}) - on cooldown ({time_str})")
+                    continue  # Continue checking - next ones may be available
                 
-                # Dacă are buton disabled dar fără lock și fără timer → neclar
+                # If button is disabled but without lock and timer -> unclear
                 if has_disabled_button and not has_lock_icon and not has_timer:
-                    print(f"   ⚠️  {case_type.upper()} (nivel {required_level}) - buton disabled (neclar)")
+                    print(f"   ⚠️  {case_type.upper()} (level {required_level}) - button disabled (unclear)")
                     continue
                 
-                # 3. Verifică dacă are buton OPEN activ
+                # 3. Check if are button OPEN activ
                 has_open_button = False
                 if '>Open<' in case_section:
                     open_positions = []
@@ -966,24 +966,24 @@ class CasehugBotNodriver:
                 
                 if has_open_button:
                     available_cases.append(case_type)
-                    print(f"   ✅ {case_type.upper()} (nivel {required_level}) - disponibil")
+                    print(f"   ✅ {case_type.upper()} (level {required_level}) - available")
                 else:
-                    print(f"   ⏳ {case_type.upper()} (nivel {required_level}) - status neclar")
+                    print(f"   ⏳ {case_type.upper()} (level {required_level}) - unclear status")
             
             if not available_cases:
-                print(f"   ⚠️  Niciun case disponibil pentru {account_name}")
+                print(f"   ⚠️  No case available for {account_name}")
             
             return available_cases
             
         except Exception as e:
-            print(f"   ❌ Eroare verificare case-uri disponibile: {e}")
+            print(f"   ❌ Error while checking available cases: {e}")
             import traceback
             traceback.print_exc()
-            # Fallback: returnează toate case-urile din config
+            # Fallback: return all cases from config
             return ["discord", "steam", "wood"]
     
     async def open_free_case(self, page, account_name, case_type):
-        """Deschide un free case specific"""
+        """Open a specific free case"""
         case_urls = {
             "discord": "https://casehug.com/free-cases/discord",
             "steam": "https://casehug.com/free-cases/steam",
@@ -1003,26 +1003,26 @@ class CasehugBotNodriver:
         }
         
         if case_type.lower() not in case_urls:
-            print(f"   ⚠️ Case type '{case_type}' necunoscut")
+            print(f"   ⚠️ Unknown case type '{case_type}'")
             return None
         
         case_url = case_urls[case_type.lower()]
-        print(f"\n📦 Deschid {case_type} pentru {account_name}...")
-        print(f"   🌐 Navighez direct la: {case_url}")
+        print(f"\n📦 Opening {case_type} for {account_name}...")
+        print(f"   🌐 Navigating directly to: {case_url}")
         
         try:
-            # În Docker: Obține cookies de la FlareSolverr ÎNAINTE de navigare
+            # In Docker: Get cookies de at FlareSolverr BEFORE de navigare
             if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary and self.use_flaresolverr:
-                print(f"   🐳 Docker: Folosesc FlareSolverr pentru bypass Cloudflare...")
+                print(f"   🐳 Docker: Using FlareSolverr for Cloudflare bypass...")
                 flare_result = await self.solve_cloudflare_with_flaresolverr(case_url, account_name=account_name)
                 
                 if flare_result and flare_result.get('cookies'):
-                    print(f"   🍪 Injectez {len(flare_result['cookies'])} cookies ÎNAINTE de navigare...")
+                    print(f"   🍪 Injecting {len(flare_result['cookies'])} cookies BEFORE navigation...")
                     
-                    # Setează cookies în browser ÎNAINTE de navigare
+                    # Set cookies in browser BEFORE de navigare
                     for cookie in flare_result['cookies']:
                         try:
-                            # Construiește cookie în format CDP
+                            # Build cookie in format CDP
                             cookie_params = {
                                 'name': cookie['name'],
                                 'value': cookie['value'],
@@ -1032,65 +1032,65 @@ class CasehugBotNodriver:
                                 'http_only': cookie.get('httpOnly', False)
                             }
                             
-                            # Adaugă sameSite dacă există
+                            # Add sameSite if exists
                             if 'sameSite' in cookie:
                                 cookie_params['same_site'] = cookie['sameSite']
                             
                             await page.send(cdp.network.set_cookie(**cookie_params))
                         except Exception as cookie_err:
-                            # Ignoră erori pentru cookies individuale (unele pot fi invalide)
+                            # Ignore erori for cookies individuale (unele pot fi invalide)
                             pass
                     
-                    print(f"   ✅ Cookies injectate - navighez la pagină...")
+                    print(f"   ✅ Cookies injectate - navighez at page...")
                     await asyncio.sleep(1)
                 else:
-                    print("   ⚠️  FlareSolverr nu a putut rezolva - continui fără cookies")
+                    print("   ⚠️  FlareSolverr could not solve - continuing without cookies")
             
-            # Navigare directă cu Nodriver (acum cu cookies deja setate în Docker)
+            # Direct navigation with Nodriver (now with cookies already set in Docker)
             await page.get(case_url)
             await asyncio.sleep(3)
             
-            # Check Cloudflare (Nodriver rezolvă automat)
+            # Check Cloudflare (Nodriver solves automatically)
             cloudflare_ok = await self.check_cloudflare(page)
             
             # Scroll
             await page.evaluate("window.scrollTo(0, 400)")
             await asyncio.sleep(1)
             
-            # Caută butonul OPEN/CLAIM
-            print(f"   🔍 Caut butonul 'Open for Free'...")
+            # Search button OPEN/CLAIM
+            print(f"   🔍 Searching for 'Open for Free' button...")
             
             button = None
             
-            # Metoda 1: Caută direct după data-testid (cel mai sigur)
+            # Method 1: Search directly after data-testid (most reliable)
             try:
                 button = await page.query_selector('button[data-testid="open-button"]')
                 if button:
-                    print(f"   ✓ Găsit buton cu data-testid='open-button'")
+                    print(f"   ✓ Found button with data-testid='open-button'")
             except:
                 pass
             
-            # Metoda 2: Fallback - caută toate butoanele
+            # Metoda 2: Fallback - search all butoanele
             if not button:
                 button_texts = ["Open for Free", "Open", "Claim", "Free", "Get"]
                 buttons = await page.select_all("button")
                 
                 for btn in buttons:
                     try:
-                        # Skip butoane disabled (locked)
+                        # Skip buttons disabled (locked)
                         is_disabled = await btn.get_attribute('disabled')
                         if is_disabled is not None:
                             btn_text = await btn.text
-                            print(f"   🔒 Buton ignore (disabled): {btn_text}")
+                            print(f"   🔒 Ignored button (disabled): {btn_text}")
                             continue
                         
-                        # Verifică textul
+                        # Check textul
                         btn_text = await btn.text
                         if btn_text:
                             for text in button_texts:
                                 if text.lower() in btn_text.lower():
                                     button = btn
-                                    print(f"   ✓ Găsit buton cu text: {btn_text}")
+                                    print(f"   ✓ Found button with text: {btn_text}")
                                     break
                         
                         if button:
@@ -1099,53 +1099,53 @@ class CasehugBotNodriver:
                         continue
             
             if not button:
-                print(f"   ❌ Nu am găsit butonul OPEN (case blocat sau pe cooldown)")
+                print(f"   ❌ Could not find OPEN button (case locked or on cooldown)")
                 return {
                     "case": case_type,
-                    "skin": "Buton lipsă",
+                    "skin": "Button missing",
                     "price": "N/A"
                 }
             
-            # Verifică dacă butonul este disabled (ultimă verificare)
+            # Check if button is disabled (final check)
             try:
                 is_disabled = await button.get_attribute('disabled')
                 if is_disabled is not None:
-                    print(f"   🔒 Butonul este LOCKED (disabled)")
+                    print(f"   🔒 Button is LOCKED (disabled)")
                     return {
                         "case": case_type,
-                        "skin": "Blocat",
+                        "skin": "Locked",
                         "price": "N/A"
                     }
             except:
                 pass
             
-            # Click pe buton
+            # Click on button
             await button.scroll_into_view()
             await asyncio.sleep(0.5)
             await button.click()
-            print(f"   ✓ Click pe butonul OPEN")
+            print(f"   ✓ Click the button OPEN")
             
-            # Așteaptă rezultatul
+            # Wait rezultatul
             await asyncio.sleep(5)
             
-            # Verifică dacă există mesaj de eroare (playtime insuficient)
+            # Check if an error message exists (insufficient playtime)
             content = await page.get_content()
             if 'Insufficient CS:GO/CS2 playtime' in content or 'Insufficient CS' in content:
-                print(f"   ❌ EROARE: Playtime CS:GO/CS2 insuficient pentru acest cont!")
-                print(f"   ⚠️  Acest cont nu poate deschide free cases (necesită mai multe ore jucate)")
+                print(f"   ❌ ERROR: Insufficient CS:GO/CS2 playtime for this account!")
+                print(f"   ⚠️  This account cannot open free cases (more played hours required)")
                 return {
                     "case": case_type,
-                    "skin": "Playtime insuficient",
+                    "skin": "Insufficient playtime",
                     "price": "N/A"
                 }
             
-            # Caută skinul și prețul
-            print(f"   🔍 Caut rezultatul...")
+            # Search skinul and price
+            print(f"   🔍 Searching for result...")
             
-            skin_name = "Necunoscut"
+            skin_name = "Unknown"
             price = "N/A"
             
-            # Caută skin prin selectors comuni
+            # Search skin prin selectors comuni
             skin_selectors = [
                 '.item-name', '.skin-name', '.reward-name',
                 '.item-title', '.skin-title', '.reward-title'
@@ -1163,12 +1163,12 @@ class CasehugBotNodriver:
                                 break
                         except:
                             continue
-                    if skin_name != "Necunoscut":
+                    if skin_name != "Unknown":
                         break
                 except:
                     continue
             
-            # Caută preț
+            # Search price
             price_selectors = [
                 '.price', '.value', '.amount', '.cost'
             ]
@@ -1181,7 +1181,7 @@ class CasehugBotNodriver:
                             text = await elem.text
                             if text and ('$' in text or '€' in text or any(c.isdigit() for c in text)):
                                 price = text.strip()
-                                print(f"   ✓ Preț: {price}")
+                                print(f"   ✓ Price: {price}")
                                 break
                         except:
                             continue
@@ -1199,65 +1199,65 @@ class CasehugBotNodriver:
             }
             
         except Exception as e:
-            print(f"   ❌ Eroare: {e}")
+            print(f"   ❌ Error: {e}")
             import traceback
             traceback.print_exc()
             return {
                 "case": case_type,
-                "skin": "Eroare",
+                "skin": "Error",
                 "price": "N/A"
             }
     
     async def process_account(self, account):
-        """Procesează un cont - lansează browser separat pentru fiecare case"""
+        """Process one account - launch separate browser flow per case"""
         account_name = account['name']
         
         print(f"\n{'='*50}")
-        print(f"🎮 Procesez contul: {account_name}")
+        print(f"🎮 Processing account: {account_name}")
         print(f"{'='*50}")
         
-        # În Docker: Crează sesiune FlareSolverr pentru acest cont  
+        # In Docker: Create FlareSolverr session for this account  
         if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
             await self.create_flaresolverr_session(account_name)
         
         browser = None
         try:
-            # Lansează browser O SINGURĂ DATĂ pentru acest cont
-            print(f"   🔍 Lansez browser...")
+            # Launch browser only once for this account
+            print(f"   🔍 Launching browser...")
             page, browser = await self.create_page_with_stealth(account_name)
             
-            # Verifică ce case-uri sunt disponibile (dynamic)
+            # Check which cases are available (dynamic)
             available_cases = await self.check_available_cases(page, account_name)
             
             if not available_cases:
-                print(f"⚠️  Niciun case disponibil pentru {account_name} astăzi")
-                print(f"   ℹ️  Verific totuși pagina de profil pentru skin-uri noi...")
+                print(f"⚠️  No case available for {account_name} today")
+                print(f"   ℹ️  Still checking profile page for new skins...")
             else:
-                # Procesează fiecare case FĂRĂ să închid browserul
+                # Process fiecare case WITHOUT to close browser
                 results = []
                 for idx, case_type in enumerate(available_cases, 1):
-                    print(f"\n   📦 Procesez case {idx}/{len(available_cases)}: {case_type.upper()}")
+                    print(f"\n   📦 Processing case {idx}/{len(available_cases)}: {case_type.upper()}")
                     
                     try:
-                        # Găsește și click butonul direct pe pagina /free-cases
+                        # Find and click the button directly on the /free-cases page
                         result = await self.open_free_case_on_page(page, account_name, case_type)
-                        # Nu mai salvăm rezultatul aici - vom extrage din profil
+                        # Do not save result here anymore - extract from profile
                         
-                        # Revino la /free-cases pentru următorul case
+                        # Return to /free-cases for next case
                         if idx < len(available_cases):
-                            print(f"   ↩️  Revin la /free-cases pentru următorul case...")
+                            print(f"   ↩️  Returning to /free-cases for next case...")
                             await page.get("https://casehug.com/free-cases")
                             await asyncio.sleep(3)
                             
                     except Exception as e:
-                        print(f"   ❌ Eroare la procesare {case_type}: {e}")
+                        print(f"   ❌ Processing error {case_type}: {e}")
                     
-                    # Pauză între case-uri
+                    # Pause between cases
                     if idx < len(available_cases):
                         await asyncio.sleep(2)
             
-            # După ce am deschis toate case-urile, extrage skin-urile noi din profil
-            print(f"\n   🔍 Extrag rezultatele din pagina de profil...")
+            # After all cases are opened, extract new skins from profile
+            print(f"\n   🔍 Extracting results from profile page...")
             results = await self.extract_new_skins_from_profile(page, account_name)
             
             return {
@@ -1267,84 +1267,84 @@ class CasehugBotNodriver:
             }
             
         except Exception as e:
-            print(f"❌ Eroare la procesare {account_name}: {e}")
+            print(f"❌ Processing error {account_name}: {e}")
             import traceback
             traceback.print_exc()
             return None
         finally:
-            # Închide browserul la final cu forță
+            # Close browser at final with force
             if browser:
                 try:
                     await browser.stop()
-                    print(f"   ✅ Browser închis pentru {account_name}")
-                    await asyncio.sleep(2)  # Așteaptă să se închidă complet
+                    print(f"   ✅ Browser closed for {account_name}")
+                    await asyncio.sleep(2)  # Wait for full close
                 except Exception as e:
-                    print(f"   ⚠️  Eroare la închidere browser: {e}")
+                    print(f"   ⚠️  Error while closing browser: {e}")
                 
-                # Forțează închiderea proceselor Chrome rămase
+                # Force closing proceselor Chrome remaining
                 try:
                     import subprocess
                     import platform
                     if platform.system() == 'Windows':
-                        # Închide procesele Chrome cu forță pe Windows
+                        # Close Chrome processes with force on Windows
                         subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
                                      stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
                         subprocess.run(['taskkill', '/F', '/IM', 'chromedriver.exe'], 
                                      stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-                        print(f"   🧹 Procese Chrome curățate pentru {account_name}")
+                        print(f"   🧹 Chrome processes cleaned for {account_name}")
                 except:
                     pass
             
-            # Închide sesiune FlareSolverr în Docker
+            # Close FlareSolverr session in Docker
             if hasattr(self, 'flaresolverr_primary') and self.flaresolverr_primary:
                 await self.destroy_flaresolverr_session(account_name)
     
     async def extract_new_skins_from_profile(self, page, account_name):
-        """Extrage skin-urile noi din pagina de profil (https://casehug.com/user-account)"""
-        print(f"\n   📊 Extrag skin-urile noi din pagina de profil...")
+        """Extract new skins from profile page (https://casehug.com/user-account)"""
+        print(f"\n   📊 Extracting new skins from profile page...")
         
         try:
-            # Navighează la pagina de profil
+            # Navigate to the profile page
             await page.get("https://casehug.com/user-account")
-            print(f"   🌐 Navigat la https://casehug.com/user-account")
+            print(f"   🌐 Navigated to https://casehug.com/user-account")
             
-            # Așteaptă încărcarea paginii
+            # Wait loading paginii
             await asyncio.sleep(4)
             
-            # Obține HTML-ul paginii
+            # Get HTML paginii
             content = await page.get_content()
             
-            # Caută toate skin-urile cu label "New"
+            # Search all skins with label "New"
             import re
             
-            # Pattern: găsește toate div-urile cu data-testid="your-drop-card-label" care conțin "New"
-            # Apoi extrage datele din același container
+            # Pattern: find all divs with data-testid="your-drop-card-label" that contain "New"
+            # Then extract data from the same container
             new_skins = []
             
-            # Split HTML în secțiuni pentru fiecare card de skin
-            # Găsește toate aparițiile de "your-drop-card-label"
+            # Split HTML in sections for fiecare card de skin
+            # Find all occurrences de "your-drop-card-label"
             pattern = r'<div data-testid="your-drop-card-label"[^>]*>([^<]+)</div>'
             labels = re.finditer(pattern, content)
             
             for label_match in labels:
                 label_text = label_match.group(1).strip()
                 
-                # Verifică dacă label-ul este "New"
+                # Check if label is "New"
                 if label_text.lower() == "new":
-                    # Găsește începutul container-ului (urcă până la div-ul părinte mare)
-                    # Caută backward până găsește div-ul care conține toate datele
+                    # Find beginning container-ului (climb until at div-ul parent mare)
+                    # Search backward until finding the parent div with all data
                     start_pos = label_match.start()
                     
-                    # Caută înapoi până găsește div-ul principal (class="sc-965b1227-6")
+                    # Search back until find div-ul principal (class="sc-965b1227-6")
                     search_back = content[max(0, start_pos - 5000):start_pos]
                     container_match = re.search(r'<div class="sc-965b1227-6[^"]*">', search_back)
                     
                     if container_match:
                         container_start = start_pos - len(search_back) + container_match.start()
-                        # Extrage secțiunea (următoarele 3000 caractere)
+                        # Extract section (next 3000 characters)
                         section = content[container_start:start_pos + 3000]
                         
-                        # Extrage datele din această secțiune
+                        # Extract data from this section
                         name_match = re.search(r'<div data-testid="your-drop-name"[^>]*>([^<]+)</div>', section)
                         category_match = re.search(r'<div data-testid="your-drop-category"[^>]*>([^<]+)</div>', section)
                         price_match = re.search(r'<span data-testid="your-drop-price"[^>]*>([^<]+)</span>', section)
@@ -1356,33 +1356,33 @@ class CasehugBotNodriver:
                             price = price_match.group(1).strip()
                             case_type = case_type_match.group(1).strip().lower() if case_type_match else "unknown"
                             
-                            # Extrage culoarea (raritatea) din gradient SVG
+                            # Extract color (rarity) from gradient SVG
                             color_match = re.search(r'stop-color="([^"]+)"', section)
                             rarity_color = color_match.group(1).upper() if color_match else "#FFFFFF"
                             
-                            # Mapează culoarea la raritate și emoji
+                            # Map color to rarity and emoji
                             rarity_map = {
                                 "#B0C3D9": ("⚪", "Consumer Grade"),  # Consumer - alb
                                 "#A3A7BB": ("⚪", "Consumer Grade"),  # Consumer variations
-                                "#5E98D9": ("🔵", "Industrial Grade"),  # Industrial - albastru deschis
+                                "#5E98D9": ("🔵", "Industrial Grade"),  # Industrial - albastru opened
                                 "#4B69FF": ("🔵", "Mil-Spec Grade"),  # Mil-Spec - albastru
                                 "#8847FF": ("🟣", "Restricted"),  # Restricted - mov
                                 "#D32CE6": ("🟣", "Restricted"),  # Restricted variations
-                                "#EB4B4B": ("🔴", "Classified"),  # Classified - roșu
+                                "#EB4B4B": ("🔴", "Classified"),  # Classified - red
                                 "#E4AE39": ("🟡", "Classified"),  # Classified variations
                                 "#F93AA6": ("🩷", "Classified"),  # Classified - roz
                                 "#FFD700": ("🟡", "Covert/Contraband"),  # Covert - auriu
                             }
                             
-                            # Găsește cel mai apropiat match pentru culoare
+                            # Find closest color match
                             rarity_emoji = "⚪"
                             for color_code, (emoji, grade_name) in rarity_map.items():
                                 if rarity_color.startswith(color_code[:4]):  # Match primele 4 caractere
                                     rarity_emoji = emoji
                                     break
                             
-                            # Nu mai folosim fallback după preț.
-                            # Prețul nu este un indicator fiabil pentru raritate.
+                            # We no longer use fallback by price.
+                            # Price is not a reliable indicator for rarity.
                             
                             skin_full_name = f"{weapon_name} | {skin_category}"
                             
@@ -1393,78 +1393,78 @@ class CasehugBotNodriver:
                                 "rarity": rarity_emoji
                             })
                             
-                            print(f"   🆕 Găsit skin nou: {rarity_emoji} {case_type.upper()} - {skin_full_name} - {price}")
+                            print(f"   🆕 Found skin new: {rarity_emoji} {case_type.upper()} - {skin_full_name} - {price}")
             
             if not new_skins:
-                print(f"   ℹ️  Niciun skin nou găsit pe pagina de profil")
+                print(f"   ℹ️  No new skins found on profile page")
             else:
-                print(f"   ✅ Total {len(new_skins)} skin-uri noi extrase")
+                print(f"   ✅ Total {len(new_skins)} new skins extracted")
             
             return new_skins
             
         except Exception as e:
-            print(f"   ❌ Eroare la extragere din profil: {e}")
+            print(f"   ❌ Error while extracting from profile: {e}")
             import traceback
             traceback.print_exc()
             return []
     
     async def open_free_case_on_page(self, page, account_name, case_type):
-        """Deschide case direct de pe pagina /free-cases fără să navigheze"""
-        print(f"📦 Deschid {case_type} direct de pe /free-cases...")
+        """Open case directly on /free-cases page without extra navigation"""
+        print(f"📦 Opening {case_type} directly on /free-cases...")
         
         try:
-            # Așteaptă ca pagina să fie gata
+            # Wait until the page is ready
             await asyncio.sleep(2)
             
-            # Găsește link-ul către case (pentru a identifica secțiunea)
+            # Find link to case (for a identifica section)
             case_link = f'/free-cases/{case_type}'
             
-            # Caută butonul "Open" în HTML folosind selector
-            # Strategia: găsește anchor-ul cu href=/free-cases/{case_type}, 
-            # apoi caută butonul "Open" în div-ul părinte
+            # Search button "Open" in HTML folosind selector
+            # Strategia: find anchor-ul with href=/free-cases/{case_type}, 
+            # then search "Open" button in parent div
             
             content = await page.get_content()
             
-            # Verifică dacă case-ul este disponibil (nu pe cooldown, nu locked)
+            # Check if case is available (not on cooldown, not locked)
             case_pos = content.find(f'href="{case_link}"')
             if case_pos == -1:
-                print(f"   ❌ Nu am găsit link-ul pentru {case_type}")
+                print(f"   ❌ Could not find link for {case_type}")
                 return None
             
-            # Extrage secțiunea (2000 caractere după link)
+            # Extract section (2000 characters after link)
             section = content[case_pos:case_pos + 2000]
             
-            # Verifică din nou dacă are timer sau e locked
+            # Check again if are timer or e locked
             if 'ri-timer-line' in section:
-                print(f"   ⏰ {case_type.upper()} este pe cooldown")
+                print(f"   ⏰ {case_type.upper()} is on cooldown")
                 return None
             
-            if 'si-ch-lock' in section or 'disabled=""' in section:
-                print(f"   🔒 {case_type.upper()} este blocat")
+            if 'and-ch-lock' in section or 'disabled=""' in section:
+                print(f"   🔒 {case_type.upper()} is locked")
                 return None
             
-            # Caută butonul "Open" folosind click pe link-ul case-ului
-            # Mai simplu: click pe anchor care duce la /free-cases/{case_type}
+            # Search button "Open" folosind click on link caseui
+            # Simpler: click anchor that points to /free-cases/{case_type}
             try:
-                # Găsește anchor-ul cu href="/free-cases/{case_type}"
+                # Find anchor-ul with href="/free-cases/{case_type}"
                 links = await page.select_all(f'a[href="{case_link}"]')
                 
                 if not links:
-                    print(f"   ❌ Nu am găsit link-ul {case_link}")
+                    print(f"   ❌ Could not find link {case_link}")
                     return None
                 
-                # Click pe primul link (care duce la pagina case-ului)
+                # Click the first link (which opens the case page)
                 link = links[0]
                 await link.scroll_into_view()
                 await asyncio.sleep(0.5)
                 await link.click()
-                print(f"   ✓ Click pe case {case_type.upper()}")
+                print(f"   ✓ Click on case {case_type.upper()}")
                 
-                # Așteaptă să se încarce pagina case-ului
+                # Wait for the case page to load
                 await asyncio.sleep(3)
                 
-                # Acum suntem pe /free-cases/{case_type}
-                # Caută butonul "Open for Free" pe această pagină
+                # Acum suntem on /free-cases/{case_type}
+                # Search button "Open for Free" on this page
                 button = None
                 
                 # Strategia 1: data-testid="open-button"
@@ -1473,13 +1473,13 @@ class CasehugBotNodriver:
                     if button:
                         is_disabled = await button.get_attribute('disabled')
                         if is_disabled is not None:
-                            print(f"   ⚠️  Buton disabled")
+                            print(f"   ⚠️  Button disabled")
                             return None
-                        print(f"   🔓 Buton găsit: open-button")
+                        print(f"   🔓 Button found: open-button")
                 except:
                     pass
                 
-                # Strategia 2: caută buton cu text "Open"
+                # Strategia 2: search button with text "Open"
                 if not button:
                     buttons = await page.select_all('button')
                     for btn in buttons:
@@ -1489,29 +1489,29 @@ class CasehugBotNodriver:
                                 is_disabled = await btn.get_attribute('disabled')
                                 if is_disabled is None:
                                     button = btn
-                                    print(f"   🔓 Buton găsit cu text: {text}")
+                                    print(f"   🔓 Button found with text: {text}")
                                     break
                         except:
                             continue
                 
                 if not button:
-                    print(f"   ❌ Nu am găsit butonul OPEN pentru {case_type}")
+                    print(f"   ❌ Could not find button OPEN for {case_type}")
                     return None
                 
-                # Click pe butonul Open
+                # Click the button Open
                 await button.scroll_into_view()
                 await asyncio.sleep(0.5)
                 await button.click()
-                print(f"   ✓ Click pe butonul OPEN")
+                print(f"   ✓ Click the button OPEN")
                 
-                # Așteaptă animația de deschidere
-                print(f"   ⏳ Aștept animație (15s)...")
+                # Wait for the opening animation
+                print(f"   ⏳ Waiting animation (15s)...")
                 await asyncio.sleep(15)
                 
-                # Verificăm doar dacă a apărut o eroare (playtime insuficient)
+                # Check only if an error appeared (insufficient playtime)
                 content = await page.get_content()
                 
-                # Verifică erori (playtime insuficient)
+                # Check erori (playtime insufficient)
                 import re
                 content_without_scripts = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
                 
@@ -1528,26 +1528,26 @@ class CasehugBotNodriver:
                         break
                 
                 if has_error:
-                    print(f"   ❌ EROARE: Playtime CS:GO/CS2 insuficient!")
+                    print(f"   ❌ ERROR: Insufficient CS:GO/CS2 playtime!")
                     return False
                 
-                print(f"   ✅ Case {case_type.upper()} deschis cu succes")
+                print(f"   ✅ Case {case_type.upper()} opened successfully")
                 return True
                 
             except Exception as e:
-                print(f"   ❌ Eroare la click: {e}")
+                print(f"   ❌ Click error: {e}")
                 return False
             
         except Exception as e:
-            print(f"   ❌ Eroare: {e}")
+            print(f"   ❌ Error: {e}")
             import traceback
             traceback.print_exc()
             return False
     
     def send_telegram_message(self, message):
-        """Trimite mesaj pe Telegram"""
+        """Send message to Telegram"""
         if not self.telegram_token or not self.telegram_chat_id:
-            print("Telegram nu este configurat.")
+            print("Telegram is not configured.")
             return
         
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
@@ -1560,14 +1560,14 @@ class CasehugBotNodriver:
         try:
             response = requests.post(url, data=data)
             if response.status_code == 200:
-                print("✅ Mesaj trimis pe Telegram")
+                print("✅ Message trimis on Telegram")
             else:
-                print(f"❌ Eroare Telegram: {response.text}")
+                print(f"❌ Telegram error: {response.text}")
         except Exception as e:
-            print(f"❌ Eroare Telegram: {e}")
+            print(f"❌ Telegram error: {e}")
     
     def format_telegram_report(self, all_results):
-        """Formatează raportul pentru Telegram"""
+        """Format report for Telegram"""
         now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         
         message = f"🎰 <b>Casehug Daily Report</b>\n"
@@ -1585,10 +1585,10 @@ class CasehugBotNodriver:
                     case_name = result['case'].upper()
                     skin = result['skin']
                     price = result['price']
-                    rarity = result.get('rarity', '⚪')  # Default la alb dacă nu există
+                    rarity = result.get('rarity', '⚪')  # Default at alb if nu exists
                     message += f"{rarity} {case_name}: {skin} - {price}\n"
             else:
-                message += "❌ Niciun skin nou\n"
+                message += "❌ No new skin\n"
             
             message += f"\n"
         
@@ -1597,44 +1597,44 @@ class CasehugBotNodriver:
         return message
     
     async def run(self):
-        """Rulează botul"""
-        print("🚀 Pornire CasehugBot (Nodriver)...")
-        print(f"📊 Număr conturi: {len(self.accounts)}")
+        """Run botul"""
+        print("🚀 Starting CasehugBot (Nodriver)...")
+        print(f"📊 Number of accounts: {len(self.accounts)}")
         print("🛡️  Bypass Cloudflare: AUTOMAT (Nodriver - 11.22s avg)\n")
         
         try:
-            # Setup browser (minimal pentru Nodriver)
+            # Setup browser (minimal for Nodriver)
             await self.setup_browser()
             
-            # Procesează TOATE conturile
+            # Process all accounts
             all_results = []
             for account in self.accounts:
-                print(f"\n🧪 Procesez: {account['name']}\n")
+                print(f"\n🧪 Processing: {account['name']}\n")
                 result = await self.process_account(account)
                 all_results.append(result)
                 
-                # Salvează timestamp dacă a procesat cu succes
+                # Save timestamp if processed successfully
                 if result and result.get('results'):
-                    # A deschis cel puțin un case cu succes
+                    # Opened at least one case successfully
                     self.save_account_timestamp(account['name'], had_success=True)
                 elif result:
-                    # A fost procesat dar fără case-uri (cooldown, locked, etc)
+                    # A fost procesat dar without cases (cooldown, locked, etc)
                     self.save_account_timestamp(account['name'], had_success=False)
                 
-                # Pauză între conturi
-                if account != self.accounts[-1]:  # Nu aștepta după ultimul cont
-                    print("\n⏳ Pauză 10s până la următorul cont (cleanup browser)...")
+                # Pause between accounts
+                if account != self.accounts[-1]:  # Nu wait after ultimul account
+                    print("\n⏳ 10s pause before next account (browser cleanup)...")
                     await asyncio.sleep(10)
             
-            # Trimite raport Telegram
+            # Send Telegram report
             if any(r is not None for r in all_results):
                 report = self.format_telegram_report(all_results)
                 self.send_telegram_message(report)
             
-            print("\n✅ Toate conturile procesate!")
+            print("\n✅ All accounts processed!")
             
         except Exception as e:
-            print(f"❌ Eroare: {e}")
+            print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
 

@@ -22,7 +22,7 @@ except Exception:
     ImageOps = None
 
 from ...core.steam_login_launcher import steam_login_launcher
-from ...core.profile_store import ensure_profile_path
+from ...core.profile_store import ensure_profile_path, get_pending_add_root
 from ...database.crud import AccountCRUD
 from ...database.db import SessionLocal
 
@@ -437,8 +437,9 @@ class SteamLoginQRDialog:
             return
         self._saving = True
         self._set_monitor_state("saving account...", "info", busy=True)
-        account_name = (self._detected_account_name or "").strip()
-        if not account_name:
+        account_hint = (self._detected_account_name or "").strip()
+        steam_id = str(self._steam_profile.get("steam_id") or "").strip()
+        if not account_hint and not steam_id:
             self._set_monitor_state("cannot save: account not detected", "error", busy=False)
             self._set_status("Account was not detected yet. Press 'Check Login' first.", "error")
             self._saving = False
@@ -456,6 +457,14 @@ class SteamLoginQRDialog:
             # Close browser before persisting account metadata.
             steam_login_launcher.close(self._session_ref)
 
+            existing_by_steam = AccountCRUD.get_by_steam_id(db, steam_id) if steam_id else None
+            account = existing_by_steam or AccountCRUD.get_by_name(db, account_hint)
+
+            if account:
+                account_name = account.account_name
+            else:
+                account_name = account_hint or f"steam_{steam_id[-6:]}"
+
             final_profile_path = ensure_profile_path(account_name)
             self._move_session_profile_to_final(final_profile_path)
             logger.info(
@@ -465,13 +474,12 @@ class SteamLoginQRDialog:
                 final_profile_path,
             )
 
-            account = AccountCRUD.get_by_name(db, account_name)
             if not account:
                 account = AccountCRUD.create(
                     db,
                     account_name=account_name,
                     steam_username=self._steam_profile.get("steam_username"),
-                    steam_id=self._steam_profile.get("steam_id"),
+                    steam_id=steam_id or None,
                     steam_nickname=self._steam_profile.get("steam_nickname") or account_name,
                     steam_avatar_url=self._steam_profile.get("steam_avatar_url"),
                     cookies=self._steam_profile.get("cookies"),
@@ -480,8 +488,8 @@ class SteamLoginQRDialog:
             # Persist final dedicated profile path for this account.
             account.browser_profile_path = final_profile_path
             account.last_login = datetime.utcnow()
-            if self._steam_profile.get("steam_id"):
-                account.steam_id = self._steam_profile.get("steam_id")
+            if steam_id:
+                account.steam_id = steam_id
             if self._steam_profile.get("steam_nickname"):
                 account.steam_nickname = self._steam_profile.get("steam_nickname")
             if self._steam_profile.get("steam_username"):
@@ -531,8 +539,7 @@ class SteamLoginQRDialog:
         self._page().update()
 
     def _prepare_session_profile_path(self) -> str:
-        pending_root = Path("profiles") / "_pending_add"
-        pending_root.mkdir(parents=True, exist_ok=True)
+        pending_root = get_pending_add_root()
         profile_path = pending_root / self._session_ref
         profile_path.mkdir(parents=True, exist_ok=True)
         self._session_profile_path = str(profile_path.resolve())

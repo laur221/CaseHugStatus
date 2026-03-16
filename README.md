@@ -416,3 +416,35 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Made with ❤️ for the CS2 community**
+
+## 📦 Windows Release (EXE + Installer)
+
+Build a distributable executable and optional installer:
+
+```bash
+python scripts/build_release.py
+```
+
+Build only executable (skip installer):
+
+```bash
+python scripts/build_release.py --skip-installer
+```
+
+Artifacts:
+- `dist/CaseHugAuto.exe`
+- `dist/installer/CaseHugAuto-Setup.exe` (if Inno Setup is installed)
+
+Installer script location:
+- `installer/CaseHugAuto.iss`
+
+## 🗂️ Data Directory
+
+By default, application data is stored per-user in:
+- Windows: `%APPDATA%\CaseHugAuto`
+
+You can override storage location:
+- Command line: `CaseHugAuto.exe --data-dir "D:\MyCaseHugData"`
+- Environment variable: `CASEHUGAUTO_HOME=D:\MyCaseHugData`
+
+This folder contains logs, profiles, runtime config and state files.

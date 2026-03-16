@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ..models.models import Account, Skin, LoginSession, BotStatus
 from typing import List, Optional, Dict
 import logging
@@ -8,6 +8,7 @@ import logging
 from ..core.profile_store import ensure_profile_path
 
 logger = logging.getLogger(__name__)
+CASE_COOLDOWN_HOURS = 24
 
 
 # ==================== ACCOUNT CRUD ====================
@@ -45,6 +46,22 @@ class AccountCRUD:
     def get_by_name(db: Session, account_name: str) -> Optional[Account]:
         """Get account by name"""
         account = db.query(Account).filter(Account.account_name == account_name).first()
+        if account:
+            AccountCRUD.ensure_profile_path(db, account)
+        return account
+
+    @staticmethod
+    def get_by_steam_id(db: Session, steam_id: Optional[str]) -> Optional[Account]:
+        """Get most recent account by Steam ID."""
+        value = str(steam_id or "").strip()
+        if not value:
+            return None
+        account = (
+            db.query(Account)
+            .filter(Account.steam_id == value)
+            .order_by(Account.id.asc())
+            .first()
+        )
         if account:
             AccountCRUD.ensure_profile_path(db, account)
         return account
@@ -95,6 +112,19 @@ class AccountCRUD:
             db.commit()
             db.refresh(account)
         return True
+
+    @staticmethod
+    def rebind_profile_paths(db: Session) -> int:
+        """Recompute browser_profile_path for all accounts based on current profile root."""
+        accounts = db.query(Account).all()
+        changed = 0
+        for account in accounts:
+            changed += 1 if AccountCRUD.ensure_profile_path(db, account, commit=False) else 0
+
+        if changed:
+            db.commit()
+
+        return changed
     
     @staticmethod
     def update_steam_profile(db: Session, account_id: int, steam_id: str, avatar_url: str, nickname: str) -> Account:
@@ -221,6 +251,141 @@ class SkinCRUD:
             )
 
         return query.order_by(Skin.created_at.desc()).first()
+
+    @staticmethod
+    def find_by_external_item_id(
+        db: Session,
+        account_id: int,
+        external_item_id: str | None,
+    ) -> Optional[Skin]:
+        item_id = str(external_item_id or "").strip()
+        if not item_id:
+            return None
+        return (
+            db.query(Skin)
+            .filter(
+                Skin.account_id == account_id,
+                Skin.external_item_id == item_id,
+            )
+            .order_by(Skin.created_at.desc())
+            .first()
+        )
+
+    @staticmethod
+    def find_duplicate_by_signature(
+        db: Session,
+        account_id: int,
+        skin_name: str,
+        case_source: Optional[str],
+        estimated_price: Optional[float],
+        obtained_date: Optional[datetime],
+        time_tolerance_seconds: int = 2,
+    ) -> Optional[Skin]:
+        query = db.query(Skin).filter(
+            Skin.account_id == account_id,
+            Skin.skin_name == skin_name,
+        )
+
+        if case_source is None:
+            query = query.filter(Skin.case_source.is_(None))
+        else:
+            query = query.filter(Skin.case_source == case_source)
+
+        if estimated_price is None:
+            query = query.filter(Skin.estimated_price.is_(None))
+        else:
+            query = query.filter(
+                func.abs(func.coalesce(Skin.estimated_price, 0.0) - float(estimated_price)) < 0.0001
+            )
+
+        if isinstance(obtained_date, datetime):
+            tol = max(0, int(time_tolerance_seconds))
+            lower = obtained_date - timedelta(seconds=tol)
+            upper = obtained_date + timedelta(seconds=tol)
+            query = query.filter(Skin.obtained_date >= lower, Skin.obtained_date <= upper)
+
+        return query.order_by(Skin.created_at.desc()).first()
+
+    @staticmethod
+    def upsert_imported(
+        db: Session,
+        account_id: int,
+        skin_name: str,
+        *,
+        external_item_id: Optional[str] = None,
+        estimated_price: Optional[float] = None,
+        case_source: Optional[str] = None,
+        rarity: Optional[str] = None,
+        condition: Optional[str] = None,
+        skin_image_url: Optional[str] = None,
+        obtained_date: Optional[datetime] = None,
+        is_new: bool = True,
+    ) -> tuple[Skin, bool]:
+        """Create or update a skin record without deleting existing account history.
+
+        Returns tuple: (skin, created_flag)
+        """
+        item_id = str(external_item_id or "").strip() or None
+        existing = SkinCRUD.find_by_external_item_id(db, account_id, item_id) if item_id else None
+
+        if not existing:
+            existing = SkinCRUD.find_duplicate_by_signature(
+                db,
+                account_id=account_id,
+                skin_name=skin_name,
+                case_source=case_source,
+                estimated_price=estimated_price,
+                obtained_date=obtained_date,
+            )
+
+        if existing:
+            changed = False
+
+            if item_id and item_id != (existing.external_item_id or ""):
+                existing.external_item_id = item_id
+                changed = True
+
+            update_values = {
+                "estimated_price": estimated_price,
+                "case_source": case_source,
+                "rarity": rarity,
+                "condition": condition,
+                "skin_image_url": skin_image_url,
+                "obtained_date": obtained_date,
+            }
+            for field, value in update_values.items():
+                if value is None:
+                    continue
+                if getattr(existing, field) != value:
+                    setattr(existing, field, value)
+                    changed = True
+
+            # Never auto-clear the NEW marker during import.
+            if is_new and not bool(existing.is_new):
+                existing.is_new = True
+                changed = True
+
+            if changed:
+                db.commit()
+                db.refresh(existing)
+            return existing, False
+
+        skin = Skin(
+            account_id=account_id,
+            skin_name=skin_name,
+            external_item_id=item_id,
+            estimated_price=estimated_price,
+            case_source=case_source,
+            rarity=rarity,
+            condition=condition,
+            skin_image_url=skin_image_url,
+            obtained_date=obtained_date,
+            is_new=bool(is_new),
+        )
+        db.add(skin)
+        db.commit()
+        db.refresh(skin)
+        return skin, True
     
     @staticmethod
     def get_by_id(db: Session, skin_id: int) -> Optional[Skin]:
@@ -419,7 +584,29 @@ class BotStatusCRUD:
         """Persist next cooldown-check timestamp for this account."""
         bot_status = BotStatusCRUD.get_or_create(db, account_id)
         delay = max(1, int(seconds_from_now))
-        bot_status.next_scheduled_run = datetime.utcnow() + timedelta(seconds=delay)
+        now = datetime.utcnow()
+
+        cooldown_due_at = None
+        if bot_status.last_cases_opened_at:
+            cooldown_due_at = bot_status.last_cases_opened_at + timedelta(hours=CASE_COOLDOWN_HOURS)
+
+        if cooldown_due_at and cooldown_due_at > now:
+            bot_status.next_scheduled_run = cooldown_due_at
+        else:
+            bot_status.next_scheduled_run = now + timedelta(seconds=delay)
+
+        db.commit()
+        db.refresh(bot_status)
+        return bot_status
+
+    @staticmethod
+    def schedule_next_run_at(db: Session, account_id: int, run_at: datetime) -> BotStatus:
+        """Persist exact UTC timestamp for the next eligible run."""
+        bot_status = BotStatusCRUD.get_or_create(db, account_id)
+        if run_at.tzinfo is not None:
+            run_at = run_at.astimezone(timezone.utc).replace(tzinfo=None)
+        now = datetime.utcnow()
+        bot_status.next_scheduled_run = run_at if run_at >= now else now
         db.commit()
         db.refresh(bot_status)
         return bot_status
