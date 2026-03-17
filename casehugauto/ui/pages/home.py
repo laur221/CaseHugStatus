@@ -29,9 +29,31 @@ class HomePage:
             total_value = (
                 db.query(func.coalesce(func.sum(Skin.estimated_price), 0.0)).scalar() or 0.0
             )
-            total_cases = (
-                db.query(func.coalesce(func.sum(BotStatus.cases_opened_total), 0)).scalar() or 0
+
+            skin_count_rows = (
+                db.query(Skin.account_id, func.count(Skin.id).label("skins_count"))
+                .group_by(Skin.account_id)
+                .all()
             )
+            skin_counts = {
+                int(row.account_id): int(row.skins_count or 0)
+                for row in skin_count_rows
+                if row.account_id is not None
+            }
+
+            status_rows = db.query(BotStatus.account_id, BotStatus.cases_opened_total).all()
+            status_case_counts = {
+                int(row.account_id): int(row.cases_opened_total or 0)
+                for row in status_rows
+                if row.account_id is not None
+            }
+
+            total_cases = 0
+            for account in accounts:
+                account_id = int(account.id)
+                inferred_cases = int(skin_counts.get(account_id, 0))
+                stored_cases = int(status_case_counts.get(account_id, 0))
+                total_cases += max(inferred_cases, stored_cases)
 
             return (
                 total_accounts,

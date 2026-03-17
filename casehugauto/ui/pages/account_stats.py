@@ -130,12 +130,13 @@ class AccountStatsPage:
             for account in sorted(accounts, key=lambda a: (a.account_name or "").lower()):
                 skin_info = skin_map.get(account.id, {"skins_count": 0, "total_value": 0.0})
                 status = status_map.get(account.id)
-                cases_opened = int(getattr(status, "cases_opened_total", 0) or 0)
+                stored_cases_opened = int(getattr(status, "cases_opened_total", 0) or 0)
                 bot_status = str(getattr(status, "status", "stopped") or "stopped").capitalize()
                 last_run = getattr(status, "last_run", None)
                 last_run_text = last_run.strftime("%Y-%m-%d %H:%M:%S") if last_run else "Never"
 
                 skins_count = int(skin_info["skins_count"])
+                cases_opened = max(stored_cases_opened, skins_count)
                 account_value = float(skin_info["total_value"])
                 avg_value = account_value / skins_count if skins_count > 0 else 0.0
 
