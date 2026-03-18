@@ -46,6 +46,7 @@ class BotConfig(TypedDict):
     telegram_chat_id: str
     telegram_notify_on_skin: bool
     telegram_notify_on_error: bool
+    telegram_attach_error_screenshot: bool
     steam_login_max_retries: int
 
 
@@ -67,6 +68,7 @@ DEFAULT_BOT_CONFIG: BotConfig = {
     "telegram_chat_id": "",
     "telegram_notify_on_skin": True,
     "telegram_notify_on_error": True,
+    "telegram_attach_error_screenshot": False,
     "steam_login_max_retries": 1,
 }
 
@@ -204,6 +206,12 @@ class BotRunner:
                             DEFAULT_BOT_CONFIG["telegram_notify_on_error"],
                         )
                     ),
+                    "telegram_attach_error_screenshot": bool(
+                        loaded.get(
+                            "telegram_attach_error_screenshot",
+                            DEFAULT_BOT_CONFIG["telegram_attach_error_screenshot"],
+                        )
+                    ),
                     "steam_login_max_retries": max(
                         0,
                         self._to_int(
@@ -284,6 +292,10 @@ class BotRunner:
             "telegram_notify_on_error",
             self._config["telegram_notify_on_error"],
         )
+        telegram_error_screenshot_raw = updates.get(
+            "telegram_attach_error_screenshot",
+            self._config["telegram_attach_error_screenshot"],
+        )
         steam_login_max_retries_raw = updates.get(
             "steam_login_max_retries",
             self._config["steam_login_max_retries"],
@@ -308,6 +320,10 @@ class BotRunner:
         telegram_notify_error = self._to_bool(
             telegram_notify_error_raw,
             self._config["telegram_notify_on_error"],
+        )
+        telegram_attach_error_screenshot = self._to_bool(
+            telegram_error_screenshot_raw,
+            self._config["telegram_attach_error_screenshot"],
         )
         telegram_bot_token = str(telegram_token_raw or "").strip()
         telegram_chat_id = str(telegram_chat_id_raw or "").strip()
@@ -344,6 +360,7 @@ class BotRunner:
                 "telegram_chat_id": telegram_chat_id,
                 "telegram_notify_on_skin": telegram_notify_skin,
                 "telegram_notify_on_error": telegram_notify_error,
+                "telegram_attach_error_screenshot": telegram_attach_error_screenshot,
                 "steam_login_max_retries": steam_login_max_retries,
             }
         )

@@ -378,6 +378,10 @@ class SettingsPage:
             label="Notify when errors happen",
             value=bool(current_cfg.get("telegram_notify_on_error", True)),
         )
+        notify_error_screenshot_cb = ft.Checkbox(
+            label="Attach screenshot on error (if available)",
+            value=bool(current_cfg.get("telegram_attach_error_screenshot", False)),
+        )
 
         def save_settings(_):
             ok, message = bot_runner.update_config(
@@ -386,6 +390,7 @@ class SettingsPage:
                     "telegram_chat_id": chat_id_field.value,
                     "telegram_notify_on_skin": bool(notify_skin_cb.value),
                     "telegram_notify_on_error": bool(notify_error_cb.value),
+                    "telegram_attach_error_screenshot": bool(notify_error_screenshot_cb.value),
                 }
             )
 
@@ -405,6 +410,7 @@ class SettingsPage:
                     chat_id_field,
                     notify_skin_cb,
                     notify_error_cb,
+                    notify_error_screenshot_cb,
                 ],
                 spacing=10,
                 tight=True,

@@ -381,6 +381,44 @@ class AutomationLogic:
             logger.warning("Telegram send exception for account %s: %s", self.account_id, exc)
             return False
 
+    def _send_telegram_photo(self, image_path: str, caption: str = "") -> bool:
+        token = self._cfg_str("telegram_bot_token")
+        chat_id = self._cfg_str("telegram_chat_id")
+        if not token or not chat_id:
+            return False
+
+        file_path = Path(str(image_path or "").strip())
+        if not file_path.exists() or not file_path.is_file():
+            return False
+
+        url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        payload = {"chat_id": chat_id}
+        safe_caption = str(caption or "").strip()
+        if safe_caption:
+            payload["caption"] = safe_caption[:1000]
+            payload["parse_mode"] = "HTML"
+
+        try:
+            with file_path.open("rb") as image_file:
+                response = requests.post(
+                    url,
+                    data=payload,
+                    files={"photo": image_file},
+                    timeout=25,
+                )
+            if response.status_code != 200:
+                logger.warning(
+                    "Telegram photo send failed for account %s: status=%s body=%s",
+                    self.account_id,
+                    response.status_code,
+                    response.text,
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("Telegram photo send exception for account %s: %s", self.account_id, exc)
+            return False
+
 
     def _format_telegram_report(self, skins: list[dict[str, Any]], opened_cases_count: int) -> str:
         now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
@@ -425,20 +463,36 @@ class AutomationLogic:
             self._emit_status(self.account_id, "Telegram report sent.", "info")
 
 
-    def _notify_telegram_error(self, error_text: str):
+    def _notify_telegram_error(self, error_text: str, screenshot_path: str = ""):
         if not self._cfg_bool("telegram_notify_on_error", True):
             return
         if not self._telegram_is_configured():
             return
 
         account_name = (getattr(self.account, "account_name", "") or str(self.account_id)).strip()
+        now_text = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        safe_error = html.escape(str(error_text or "Unknown error"))
         message = (
             "❌ <b>CaseHug Auto Error</b>\n"
             f"<b>Account:</b> {html.escape(account_name)}\n"
-            f"<b>Time:</b> {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
-            f"{html.escape(str(error_text or 'Unknown error'))}"
+            f"<b>Time:</b> {now_text}\n\n"
+            f"{safe_error}"
         )
-        self._send_telegram_message(message)
+
+        sent_photo = False
+        if self._cfg_bool("telegram_attach_error_screenshot", False) and screenshot_path:
+            photo_caption = (
+                "❌ <b>CaseHug Auto Error</b>\n"
+                f"<b>Account:</b> {html.escape(account_name)}\n"
+                f"<b>Time:</b> {now_text}\n\n"
+                f"{safe_error}"
+            )
+            sent_photo = self._send_telegram_photo(screenshot_path, caption=photo_caption)
+            if sent_photo:
+                self._emit_status(self.account_id, "Telegram error screenshot sent.", "info")
+
+        if not sent_photo:
+            self._send_telegram_message(message)
 
     # ------------------------------------------------------------------ #
     #  BROWSER SETUP                                                       #
@@ -786,7 +840,10 @@ class AutomationLogic:
                 )
             self._emit_status(self.account_id, f"Error: {e}", "error")
             try:
-                self._notify_telegram_error(str(e))
+                self._notify_telegram_error(
+                    str(e),
+                    screenshot_path=str(debug_meta.get("screenshot_path") or ""),
+                )
             except Exception:
                 pass
             logger.error(f"Error in bot for account {self.account_id}: {e}", exc_info=True)
