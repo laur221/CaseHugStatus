@@ -18,6 +18,8 @@ class AccountsPage:
         self.content = None
         self.accounts_list = None
         self._refresh_loop_started = False
+        self._accounts_scroll_offset = 0.0
+        self._suspend_auto_refresh_until = 0.0
 
     def build(self) -> ft.Container:
         """Build accounts page"""
@@ -47,6 +49,7 @@ class AccountsPage:
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=10,
+            on_scroll=self._on_accounts_scroll,
         )
 
         self.content = ft.Column(
@@ -84,13 +87,33 @@ class AccountsPage:
         def _loop():
             while True:
                 try:
-                    if getattr(self.app, "current_page", None) == self:
+                    if (
+                        getattr(self.app, "current_page", None) == self
+                        and time.time() >= float(self._suspend_auto_refresh_until or 0.0)
+                    ):
                         self.refresh_accounts()
                 except Exception:
                     pass
                 time.sleep(2.5)
 
         threading.Thread(target=_loop, daemon=True).start()
+
+    def _on_accounts_scroll(self, e):
+        try:
+            self._accounts_scroll_offset = max(0.0, float(getattr(e, "pixels", 0.0) or 0.0))
+        except Exception:
+            self._accounts_scroll_offset = 0.0
+
+    def _restore_scroll_position(self):
+        target = max(0.0, float(getattr(self, "_accounts_scroll_offset", 0.0) or 0.0))
+        if target <= 1:
+            return
+        if not self.accounts_list:
+            return
+        try:
+            self.accounts_list.scroll_to(offset=target, duration=0)
+        except Exception:
+            pass
 
     def refresh_accounts(self):
         """Refresh accounts list"""
@@ -158,6 +181,7 @@ class AccountsPage:
                 try:
                     if hasattr(self.accounts_list, "page") and self.accounts_list.page:
                         self.accounts_list.update()
+                        self._restore_scroll_position()
                 except Exception as e:
                     logger.debug(f"Could not update accounts list: {e}")
 
@@ -169,6 +193,7 @@ class AccountsPage:
                 try:
                     if hasattr(self.accounts_list, "page") and self.accounts_list.page:
                         self.accounts_list.update()
+                        self._restore_scroll_position()
                 except Exception:
                     pass
         finally:
@@ -413,6 +438,7 @@ class AccountsPage:
 
     def _toggle_bot(self, account):
         """Start/stop bot for an account"""
+        self._suspend_auto_refresh_until = time.time() + 3.0
         if bot_runner.is_running(account.id):
             ok, message = bot_runner.stop_account(account.id)
             snack_msg = (

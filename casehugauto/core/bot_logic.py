@@ -108,14 +108,11 @@ _RARITY_TO_ICON = {
 
 _CASEHUG_FREE_CASE_URLS = (
     "https://casehug.com/free-cases",
-    "https://hugcase.com/free-cases",
 )
 
 _SESSION_COOKIE_DOMAINS = (
     ".casehug.com",
     "casehug.com",
-    ".hugcase.com",
-    "hugcase.com",
     ".steamcommunity.com",
     "steamcommunity.com",
     ".steampowered.com",
@@ -463,7 +460,7 @@ class AutomationLogic:
             self._emit_status(self.account_id, "Telegram report sent.", "info")
 
 
-    def _notify_telegram_error(self, error_text: str, screenshot_path: str = ""):
+    def _notify_telegram_error(self, error_text: str, screenshot_path: str = "", page_url: str = ""):
         if not self._cfg_bool("telegram_notify_on_error", True):
             return
         if not self._telegram_is_configured():
@@ -472,10 +469,16 @@ class AutomationLogic:
         account_name = (getattr(self.account, "account_name", "") or str(self.account_id)).strip()
         now_text = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         safe_error = html.escape(str(error_text or "Unknown error"))
+        raw_url = str(page_url or "").strip()
+        if len(raw_url) > 320:
+            raw_url = f"{raw_url[:317]}..."
+        safe_url = html.escape(raw_url)
+        page_line = f"<b>Page:</b> {safe_url}\n" if safe_url else ""
         message = (
             "❌ <b>CaseHug Auto Error</b>\n"
             f"<b>Account:</b> {html.escape(account_name)}\n"
-            f"<b>Time:</b> {now_text}\n\n"
+            f"<b>Time:</b> {now_text}\n"
+            f"{page_line}\n"
             f"{safe_error}"
         )
 
@@ -484,7 +487,8 @@ class AutomationLogic:
             photo_caption = (
                 "❌ <b>CaseHug Auto Error</b>\n"
                 f"<b>Account:</b> {html.escape(account_name)}\n"
-                f"<b>Time:</b> {now_text}\n\n"
+                f"<b>Time:</b> {now_text}\n"
+                f"{page_line}\n"
                 f"{safe_error}"
             )
             sent_photo = self._send_telegram_photo(screenshot_path, caption=photo_caption)
@@ -843,6 +847,7 @@ class AutomationLogic:
                 self._notify_telegram_error(
                     str(e),
                     screenshot_path=str(debug_meta.get("screenshot_path") or ""),
+                    page_url=str(debug_meta.get("url") or ""),
                 )
             except Exception:
                 pass
@@ -870,9 +875,7 @@ class AutomationLogic:
         # Check if already logged in
         if await self._is_casehug_logged_in():
             self._emit_status(self.account_id, "Already logged in with Steam.", "success")
-            await self._persist_steam_cookies_from_browser()
-            await self._sync_steam_profile_from_browser()
-            await self._ensure_casehug_context_after_login(timeout_seconds=20)
+            await self._run_post_login_housekeeping(context_timeout_seconds=20)
             return
 
         # Restore Steam session from cookies saved in main add-account flow.
@@ -886,9 +889,7 @@ class AutomationLogic:
         total_attempts = 1 + max_additional_retries
         for attempt in range(1, total_attempts + 1):
             if await self._steam_login_via_button():
-                await self._persist_steam_cookies_from_browser()
-                await self._sync_steam_profile_from_browser()
-                if await self._ensure_casehug_context_after_login(timeout_seconds=30):
+                if await self._run_post_login_housekeeping(context_timeout_seconds=30):
                     return
 
                 self._emit_status(
@@ -911,6 +912,76 @@ class AutomationLogic:
                     pass
 
         raise RuntimeError("Steam login could not be confirmed.")
+
+
+    async def _run_post_login_housekeeping(self, context_timeout_seconds: int = 30) -> bool:
+        """
+        Finalize login flow without allowing silent hangs:
+        - save cookies (best effort)
+        - sync Steam profile (best effort)
+        - verify CaseHug authenticated context (required)
+        """
+        cookie_timeout = max(6, self._cfg_int("post_login_cookie_sync_timeout_seconds", 12))
+        profile_timeout = max(8, self._cfg_int("post_login_profile_sync_timeout_seconds", 20))
+        context_timeout = max(12, int(context_timeout_seconds or 30))
+
+        async def _await_step(label: str, coro, timeout: int, required: bool) -> bool:
+            try:
+                result = await asyncio.wait_for(coro, timeout=timeout)
+            except asyncio.TimeoutError:
+                self._emit_status(
+                    self.account_id,
+                    f"{label} timed out after {timeout}s.",
+                    "warning",
+                )
+                logger.warning(
+                    "Post-login step timed out: account=%s step=%s timeout=%ss",
+                    self.account_id,
+                    label,
+                    timeout,
+                )
+                return not required
+            except Exception as exc:
+                self._emit_status(
+                    self.account_id,
+                    f"{label} failed: {exc}",
+                    "warning",
+                )
+                logger.warning(
+                    "Post-login step failed: account=%s step=%s error=%s",
+                    self.account_id,
+                    label,
+                    exc,
+                )
+                return not required
+
+            if required and not bool(result):
+                self._emit_status(
+                    self.account_id,
+                    f"{label} could not confirm session.",
+                    "warning",
+                )
+                return False
+            return True
+
+        await _await_step(
+            "Saving session cookies",
+            self._persist_steam_cookies_from_browser(),
+            cookie_timeout,
+            required=False,
+        )
+        await _await_step(
+            "Syncing Steam profile",
+            self._sync_steam_profile_from_browser(),
+            profile_timeout,
+            required=False,
+        )
+        return await _await_step(
+            "Refreshing CaseHug session",
+            self._ensure_casehug_context_after_login(timeout_seconds=context_timeout),
+            timeout=context_timeout + 15,
+            required=True,
+        )
 
     async def _ensure_casehug_context_after_login(self, timeout_seconds: int = 30) -> bool:
         """Return to CaseHug page and confirm authenticated state there."""
@@ -1039,7 +1110,7 @@ class AutomationLogic:
                     continue
                 if not any(
                     host in domain
-                    for host in ("steamcommunity.com", "steampowered.com", "casehug.com", "hugcase.com")
+                    for host in ("steamcommunity.com", "steampowered.com", "casehug.com")
                 ):
                     continue
                 parsed[name] = value
@@ -1076,7 +1147,7 @@ class AutomationLogic:
         try:
             original_url = await self._get_tab_url(self.page)
             low = (original_url or "").lower()
-            restore_casehug_context = ("casehug.com" in low) or ("hugcase.com" in low)
+            restore_casehug_context = ("casehug.com" in low)
         except Exception:
             original_url = ""
             restore_casehug_context = False
@@ -1166,6 +1237,73 @@ class AutomationLogic:
                 except Exception:
                     pass
 
+    async def _dismiss_casehug_login_overlay(self) -> bool:
+        """
+        Best-effort dismissal for CaseHug modal/backdrop overlays that can block
+        clicks or hide the top part of the page during login flow.
+        """
+        dismissed = False
+
+        close_selectors = (
+            '[data-testid="close-modal-button"]',
+            ".ant-modal-close",
+            ".ant-drawer-close",
+            "button[aria-label='Close']",
+            "button[aria-label='close']",
+            "button[title='Close']",
+            "button[title='close']",
+        )
+
+        for selector in close_selectors:
+            try:
+                node = await self.page.query_selector(selector)
+                if not node:
+                    continue
+                await node.scroll_into_view()
+                await asyncio.sleep(0.15)
+                await node.click()
+                dismissed = True
+                await asyncio.sleep(0.35)
+            except Exception:
+                continue
+
+        # Fallback: try backdrop click + ESC on page context.
+        try:
+            js_dismissed = await self.page.evaluate(
+                r"""
+(() => {
+  let acted = false;
+  const backdrops = [
+    '.ant-modal-mask',
+    '.ant-drawer-mask',
+    '.ReactModal__Overlay',
+    '[data-testid*="backdrop"]',
+  ];
+  for (const sel of backdrops) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    try { el.click(); acted = true; } catch (_) {}
+  }
+  try {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true }));
+    acted = true;
+  } catch (_) {}
+  return acted;
+})()
+"""
+            )
+            if js_dismissed:
+                dismissed = True
+        except Exception:
+            pass
+
+        if dismissed:
+            self._hide_browser_windows()
+            await asyncio.sleep(0.6)
+            logger.info("Dismissed CaseHug overlay for account %s.", self.account_id)
+        return dismissed
+
     async def _click_best_steam_trigger(self) -> bool:
         # Preferred direct target on CaseHug when user is not authenticated.
         try:
@@ -1184,7 +1322,10 @@ class AutomationLogic:
 
         # Phase 1: buttons only (safer than generic anchors on dynamic pages).
         for selector in ("button",):
-            elements = await self.page.select_all(selector)
+            try:
+                elements = await self.page.select_all(selector)
+            except Exception:
+                continue
             for element in elements:
                 try:
                     html = (await element.get_html() or "").lower()
@@ -1217,7 +1358,10 @@ class AutomationLogic:
 
         # Phase 2: anchors fallback with strict filtering.
         if not candidates:
-            elements = await self.page.select_all("a")
+            try:
+                elements = await self.page.select_all("a")
+            except Exception:
+                elements = []
             for element in elements:
                 try:
                     html = (await element.get_html() or "").lower()
@@ -1350,7 +1494,12 @@ class AutomationLogic:
 
         # Fallback for markup variations.
         for selector in ("button", "input"):
-            elements = await steam_tab.select_all(selector)
+            try:
+                elements = await steam_tab.select_all(selector)
+            except Exception:
+                # Steam page can transiently timeout while querying controls.
+                # This should not abort the whole login flow.
+                continue
             for element in elements:
                 try:
                     html = (await element.get_html() or "").lower()
@@ -1385,6 +1534,12 @@ class AutomationLogic:
             except Exception:
                 pass
 
+            # Clear blocking overlays that can remain after redirects.
+            try:
+                await self._dismiss_casehug_login_overlay()
+            except Exception:
+                pass
+
             now = asyncio.get_event_loop().time()
             if now - last_refresh >= 12:
                 for target_url in _CASEHUG_FREE_CASE_URLS:
@@ -1410,9 +1565,34 @@ class AutomationLogic:
             await self.page.get("https://casehug.com/free-cases")
             await asyncio.sleep(2.5)
             await self._wait_for_cloudflare(timeout=35)
+            await self._dismiss_casehug_login_overlay()
+
+            # Guard: page may already be authenticated even if login flow reached this path.
+            if await self._is_casehug_logged_in():
+                self._emit_status(
+                    self.account_id,
+                    "CaseHug session already authenticated.",
+                    "success",
+                )
+                return True
 
             clicked = await self._click_best_steam_trigger()
             if not clicked:
+                # One retry after overlay dismissal (some pages block clicks until modal closes).
+                try:
+                    await self._dismiss_casehug_login_overlay()
+                except Exception:
+                    pass
+                clicked = await self._click_best_steam_trigger()
+
+            if not clicked:
+                if await self._is_casehug_logged_in():
+                    self._emit_status(
+                        self.account_id,
+                        "Steam sign-in button not visible, but session is authenticated.",
+                        "success",
+                    )
+                    return True
                 self._emit_status(self.account_id, "Steam sign-in button not found.", "warning")
                 return False
 
@@ -1441,7 +1621,20 @@ class AutomationLogic:
             except Exception:
                 pass
 
-            await self._complete_steam_openid_if_needed()
+            try:
+                await asyncio.wait_for(self._complete_steam_openid_if_needed(), timeout=25)
+            except asyncio.TimeoutError:
+                self._emit_status(
+                    self.account_id,
+                    "Steam OpenID approval step timed out. Continuing login validation...",
+                    "warning",
+                )
+            except Exception as exc:
+                self._emit_status(
+                    self.account_id,
+                    f"Steam OpenID approval warning: {exc}",
+                    "warning",
+                )
 
             logged_in = await self._wait_for_casehug_login(timeout_seconds=35)
             if logged_in:
