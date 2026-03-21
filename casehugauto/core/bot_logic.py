@@ -14,6 +14,7 @@ import re
 import threading
 import time
 from typing import Any, Callable, Mapping
+from urllib.parse import parse_qs, unquote, urlparse
 
 import nodriver as uc
 import requests
@@ -27,6 +28,7 @@ from .profile_store import ensure_profile_path as ensure_managed_profile_path
 logger = logging.getLogger(__name__)
 logging.getLogger("uc.connection").setLevel(logging.WARNING)
 _NODRIVER_WS_PATCH_APPLIED = False
+_NODRIVER_COOKIE_PATCH_APPLIED = False
 
 _JS_EXTRACT_NEW_DROPS = r"""
 (() => {
@@ -113,10 +115,15 @@ _CASEHUG_FREE_CASE_URLS = (
 _SESSION_COOKIE_DOMAINS = (
     ".casehug.com",
     "casehug.com",
+    ".hugcase.com",
+    "hugcase.com",
     ".steamcommunity.com",
     "steamcommunity.com",
     ".steampowered.com",
     "steampowered.com",
+)
+_SESSION_COOKIE_URLS = tuple(
+    f"https://{domain.lstrip('.')}/" for domain in _SESSION_COOKIE_DOMAINS
 )
 
 
@@ -291,6 +298,39 @@ def _apply_nodriver_websocket_compat_patch():
     logger.info("Applied nodriver websocket compatibility patch (websockets>=16).")
 
 
+def _apply_nodriver_cookie_compat_patch():
+    """
+    nodriver Cookie.from_json may fail on some Chromium builds where
+    getAllCookies omits newer fields (for example `sameParty`).
+    Patch parser with safe defaults so cookie sync does not break login flow.
+    """
+    global _NODRIVER_COOKIE_PATCH_APPLIED
+    if _NODRIVER_COOKIE_PATCH_APPLIED:
+        return
+
+    try:
+        from nodriver.cdp import network as cdp_network
+    except Exception:
+        return
+
+    cookie_cls = getattr(cdp_network, "Cookie", None)
+    original_from_json = getattr(cookie_cls, "from_json", None) if cookie_cls else None
+    if not callable(original_from_json):
+        return
+
+    def _from_json_safe(cls, payload):
+        data = dict(payload or {})
+        data.setdefault("sameParty", False)
+        data.setdefault("priority", "Medium")
+        data.setdefault("sourceScheme", "Secure" if bool(data.get("secure")) else "NonSecure")
+        data.setdefault("sourcePort", -1)
+        return original_from_json(data)
+
+    type.__setattr__(cookie_cls, "from_json", classmethod(_from_json_safe))
+    _NODRIVER_COOKIE_PATCH_APPLIED = True
+    logger.info("Applied nodriver cookie compatibility patch for missing CDP fields.")
+
+
 class AutomationLogic:
     def __init__(
         self,
@@ -310,6 +350,7 @@ class AutomationLogic:
         self.page = None
         self.last_result_status = "unknown"
         self.last_opened_cases_count = 0
+        self._steam_manual_login_required = False
 
     # ------------------------------------------------------------------ #
     #  PUBLIC ENTRY POINT                                                  #
@@ -519,6 +560,7 @@ class AutomationLogic:
 
         self._emit_status(self.account_id, "Launching browser (no GUI)...", "info")
         _apply_nodriver_websocket_compat_patch()
+        _apply_nodriver_cookie_compat_patch()
 
         browser_args = [
             "--window-position=-32000,-32000",  # off-screen = no visible window
@@ -710,7 +752,7 @@ class AutomationLogic:
         try:
             await self._start_browser()
             await self._login()
-            if not await self._is_casehug_logged_in():
+            if not await self._is_casehug_logged_in_safe(timeout_seconds=8):
                 # Guard against transient post-OpenID redirect states.
                 self._emit_status(
                     self.account_id,
@@ -873,16 +915,21 @@ class AutomationLogic:
         await self._wait_for_cloudflare()
 
         # Check if already logged in
-        if await self._is_casehug_logged_in():
+        if await self._is_casehug_logged_in_safe(timeout_seconds=8):
             self._emit_status(self.account_id, "Already logged in with Steam.", "success")
             await self._run_post_login_housekeeping(context_timeout_seconds=20)
             return
 
-        # Restore Steam session from cookies saved in main add-account flow.
-        if await self._restore_steam_session():
-            self._emit_status(self.account_id, "Steam session restored from saved cookies.", "info")
+        # If Steam is already authenticated in this browser profile, do not overwrite
+        # potentially newer profile cookies with stale DB cookies.
+        if await self._is_steam_authenticated_session(timeout_seconds=15):
+            self._emit_status(self.account_id, "Steam session already authenticated in browser profile.", "info")
         else:
-            self._emit_status(self.account_id, "Saved Steam cookies not enough, using Steam sign-in flow.", "warning")
+            # Restore Steam session from cookies saved in main add-account flow.
+            if await self._restore_steam_session():
+                self._emit_status(self.account_id, "Steam session restored from saved cookies.", "info")
+            else:
+                self._emit_status(self.account_id, "Saved Steam cookies not enough, using Steam sign-in flow.", "warning")
 
         # Fallback: click Steam login button on page.
         max_additional_retries = max(0, self._cfg_int("steam_login_max_retries", 1))
@@ -898,6 +945,9 @@ class AutomationLogic:
                     "warning",
                 )
 
+            if self._steam_manual_login_required:
+                break
+
             if attempt < total_attempts:
                 self._emit_status(
                     self.account_id,
@@ -910,6 +960,9 @@ class AutomationLogic:
                     await self._wait_for_cloudflare(timeout=25)
                 except Exception:
                     pass
+
+        if self._steam_manual_login_required:
+            raise RuntimeError("Steam session is not authenticated in this browser profile. Please sign in to Steam once and retry.")
 
         raise RuntimeError("Steam login could not be confirmed.")
 
@@ -970,12 +1023,26 @@ class AutomationLogic:
             cookie_timeout,
             required=False,
         )
-        await _await_step(
-            "Syncing Steam profile",
-            self._sync_steam_profile_from_browser(),
-            profile_timeout,
-            required=False,
-        )
+        should_sync_profile = self._cfg_bool("sync_steam_profile_after_login", False)
+        if not should_sync_profile:
+            should_sync_profile = not bool(
+                (getattr(self.account, "steam_id", "") or "").strip()
+                and (getattr(self.account, "steam_nickname", "") or "").strip()
+                and (getattr(self.account, "steam_avatar_url", "") or "").strip()
+            )
+
+        if should_sync_profile:
+            await _await_step(
+                "Syncing Steam profile",
+                self._sync_steam_profile_from_browser(),
+                profile_timeout,
+                required=False,
+            )
+        else:
+            logger.debug(
+                "Skipping Steam profile sync for account %s: profile fields already present.",
+                self.account_id,
+            )
         return await _await_step(
             "Refreshing CaseHug session",
             self._ensure_casehug_context_after_login(timeout_seconds=context_timeout),
@@ -992,12 +1059,26 @@ class AutomationLogic:
                 await self.page.get(target_url)
                 await asyncio.sleep(2.0)
                 await self._wait_for_cloudflare(timeout=min(20, timeout_seconds))
-                if await self._is_casehug_logged_in():
+                if await self._is_casehug_logged_in_safe(timeout_seconds=8):
                     return True
             except Exception:
                 continue
 
         return await self._wait_for_casehug_login(timeout_seconds=min(45, timeout_seconds + 10))
+
+    async def _is_casehug_logged_in_safe(self, timeout_seconds: int = 8) -> bool:
+        timeout_seconds = max(2, int(timeout_seconds or 8))
+        try:
+            return bool(await asyncio.wait_for(self._is_casehug_logged_in(), timeout=timeout_seconds))
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out while checking CaseHug login state for account %s (%ss).",
+                self.account_id,
+                timeout_seconds,
+            )
+            return False
+        except Exception:
+            return False
 
     async def _is_casehug_logged_in(self) -> bool:
         try:
@@ -1023,6 +1104,27 @@ class AutomationLogic:
             return False
         return ('href="/user-account"' in content) and ("header-un-auth-button" not in content)
 
+    async def _is_steam_authenticated_session(self, timeout_seconds: int = 15) -> bool:
+        """Best-effort Steam auth probe in the current browser profile."""
+        timeout_seconds = max(6, int(timeout_seconds or 15))
+        try:
+            await self.page.get("https://steamcommunity.com/my")
+            await asyncio.sleep(2.5)
+            current_url = (await self._get_tab_url(self.page)).lower()
+
+            if "steamcommunity.com" not in current_url:
+                return False
+            if any(token in current_url for token in ("/login", "/openid/login", "/openid/loginform")):
+                return False
+
+            content = (await self.page.get_content()).lower()
+            if any(token in content for token in ("input_username", "newlogindialog_login", "steam-login")):
+                return False
+
+            return True
+        except Exception:
+            return False
+
     async def _restore_steam_session(self) -> bool:
         cookies = self.account.cookies if isinstance(self.account.cookies, dict) else {}
         if not cookies:
@@ -1035,6 +1137,33 @@ class AutomationLogic:
             if not name:
                 continue
             cookie_value = "" if value is None else str(value)
+            lower_name = name.lower()
+            is_host_cookie = name.startswith("__Host-")
+            is_secure_cookie = (
+                name.startswith("__Secure-")
+                or is_host_cookie
+                or lower_name.endswith("secure")
+                or ("secure" in lower_name and "refresh" in lower_name)
+            )
+
+            if is_host_cookie:
+                # __Host-* cookies must be host-only + secure and cannot include `domain`.
+                for url in _SESSION_COOKIE_URLS:
+                    try:
+                        await self.page.send(
+                            uc.cdp.network.set_cookie(
+                                name=name,
+                                value=cookie_value,
+                                url=url,
+                                path="/",
+                                secure=True,
+                            )
+                        )
+                        restored += 1
+                    except Exception:
+                        continue
+                continue
+
             for domain in _SESSION_COOKIE_DOMAINS:
                 try:
                     await self.page.send(
@@ -1043,11 +1172,25 @@ class AutomationLogic:
                             value=cookie_value,
                             domain=domain,
                             path="/",
+                            secure=True if is_secure_cookie else None,
                         )
                     )
                     restored += 1
                 except Exception:
-                    continue
+                    # Domain write can fail for some secure cookie policies; retry via URL.
+                    try:
+                        await self.page.send(
+                            uc.cdp.network.set_cookie(
+                                name=name,
+                                value=cookie_value,
+                                url=f"https://{domain.lstrip('.')}/",
+                                path="/",
+                                secure=True if is_secure_cookie else None,
+                            )
+                        )
+                        restored += 1
+                    except Exception:
+                        continue
 
         if restored == 0:
             return False
@@ -1058,24 +1201,13 @@ class AutomationLogic:
                 await self.page.get(target_url)
                 await asyncio.sleep(2.0)
                 await self._wait_for_cloudflare(timeout=15)
-                if await self._is_casehug_logged_in():
+                if await self._is_casehug_logged_in_safe(timeout_seconds=8):
                     return True
             except Exception:
                 continue
 
         # Fallback: verify Steam session, then regular Steam-sign flow can continue.
-        try:
-            await self.page.get("https://steamcommunity.com/my")
-            await asyncio.sleep(2.5)
-            current_url = (self.page.url or "").lower()
-            if "steamcommunity.com" in current_url and "login" not in current_url:
-                return True
-            content = (await self.page.get_content()).lower()
-            if "steamcommunity.com" in current_url and "input_username" not in content:
-                return True
-        except Exception:
-            return False
-        return False
+        return await self._is_steam_authenticated_session(timeout_seconds=15)
 
     async def _persist_steam_cookies_from_browser(self) -> bool:
         """Save current Steam cookies from browser session into account.cookies."""
@@ -1110,7 +1242,7 @@ class AutomationLogic:
                     continue
                 if not any(
                     host in domain
-                    for host in ("steamcommunity.com", "steampowered.com", "casehug.com")
+                    for host in ("steamcommunity.com", "steampowered.com", "casehug.com", "hugcase.com")
                 ):
                     continue
                 parsed[name] = value
@@ -1137,6 +1269,94 @@ class AutomationLogic:
             )
             return False
 
+    async def _sync_casehug_alias_cookies(self) -> int:
+        """Mirror auth cookies across casehug.com <-> hugcase.com domains."""
+        if not self.page:
+            return 0
+
+        try:
+            result = await asyncio.wait_for(
+                self.page.send(uc.cdp.network.get_all_cookies()),
+                timeout=8,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out while reading cookies for CaseHug alias sync (account %s).",
+                self.account_id,
+            )
+            return 0
+        except Exception:
+            return 0
+
+        cookies_raw = []
+        if isinstance(result, dict):
+            cookies_raw = result.get("cookies") or []
+        elif isinstance(result, list):
+            cookies_raw = result
+        else:
+            candidate = getattr(result, "cookies", None)
+            if isinstance(candidate, list):
+                cookies_raw = candidate
+
+        domain_cookies: dict[str, str] = {}
+        for item in cookies_raw:
+            try:
+                name = str(getattr(item, "name", "") or (item.get("name") if isinstance(item, dict) else "")).strip()
+                value = str(getattr(item, "value", "") or (item.get("value") if isinstance(item, dict) else ""))
+                domain = str(
+                    getattr(item, "domain", "") or (item.get("domain") if isinstance(item, dict) else "")
+                ).lower()
+                if not name or not value:
+                    continue
+                if ("casehug.com" not in domain) and ("hugcase.com" not in domain):
+                    continue
+                domain_cookies[name] = value
+            except Exception:
+                continue
+
+        if not domain_cookies:
+            return 0
+
+        set_count = 0
+        for name, value in domain_cookies.items():
+            is_host_cookie = name.startswith("__Host-")
+            is_secure_cookie = name.startswith("__Secure-") or is_host_cookie
+            domains = (".casehug.com", "casehug.com", ".hugcase.com", "hugcase.com")
+
+            if is_host_cookie:
+                for domain in domains:
+                    try:
+                        await self.page.send(
+                            uc.cdp.network.set_cookie(
+                                name=name,
+                                value=value,
+                                url=f"https://{domain.lstrip('.')}/",
+                                path="/",
+                                secure=True,
+                            )
+                        )
+                        set_count += 1
+                    except Exception:
+                        continue
+                continue
+
+            for domain in domains:
+                try:
+                    await self.page.send(
+                        uc.cdp.network.set_cookie(
+                            name=name,
+                            value=value,
+                            domain=domain,
+                            path="/",
+                            secure=True if is_secure_cookie else None,
+                        )
+                    )
+                    set_count += 1
+                except Exception:
+                    continue
+
+        return set_count
+
     async def _sync_steam_profile_from_browser(self) -> bool:
         """Read Steam profile (id/nickname/avatar) from active session and persist it."""
         if not self.page:
@@ -1147,7 +1367,7 @@ class AutomationLogic:
         try:
             original_url = await self._get_tab_url(self.page)
             low = (original_url or "").lower()
-            restore_casehug_context = ("casehug.com" in low)
+            restore_casehug_context = ("casehug.com" in low) or ("hugcase.com" in low)
         except Exception:
             original_url = ""
             restore_casehug_context = False
@@ -1433,9 +1653,89 @@ class AutomationLogic:
         except Exception:
             return ""
 
-    async def _complete_steam_openid_if_needed(self):
+    async def _close_stale_steam_openid_tabs(self) -> None:
+        """Best-effort close of leftover Steam OpenID/callback tabs."""
         if not self.browser:
             return
+
+        tabs = list(getattr(self.browser, "tabs", []) or [])
+        for tab in tabs:
+            if tab is self.page:
+                continue
+
+            tab_url = (await self._get_tab_url(tab)).lower()
+            is_steam_openid = (
+                "steamcommunity.com/openid/login" in tab_url
+                or "steamcommunity.com/openid/loginform" in tab_url
+                or ("steamcommunity.com/login/home" in tab_url and "openid" in tab_url)
+            )
+            is_casehug_callback = self._is_casehug_url(tab_url) and (
+                "openid" in tab_url
+                or "/auth/steam" in tab_url
+                or "steam" in tab_url
+            )
+            if not (is_steam_openid or is_casehug_callback):
+                continue
+
+            try:
+                close_fn = getattr(tab, "close", None)
+                if callable(close_fn):
+                    maybe = close_fn()
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+            except Exception:
+                continue
+
+    def _normalize_casehug_alias_url(self, raw_url: str) -> str:
+        """Normalize legacy hugcase.com callback links to casehug.com."""
+        if not raw_url:
+            return raw_url
+
+        normalized = str(raw_url)
+        replacements = (
+            ("https://www.hugcase.com", "https://casehug.com"),
+            ("http://www.hugcase.com", "https://casehug.com"),
+            ("https://hugcase.com", "https://casehug.com"),
+            ("http://hugcase.com", "https://casehug.com"),
+            ("//www.hugcase.com", "//casehug.com"),
+            ("//hugcase.com", "//casehug.com"),
+            ("%3A%2F%2Fwww.hugcase.com", "%3A%2F%2Fcasehug.com"),
+            ("%3A%2F%2Fhugcase.com", "%3A%2F%2Fcasehug.com"),
+            ("%2F%2Fwww.hugcase.com", "%2F%2Fcasehug.com"),
+            ("%2F%2Fhugcase.com", "%2F%2Fcasehug.com"),
+            ("www.hugcase.com", "casehug.com"),
+            ("hugcase.com", "casehug.com"),
+        )
+        for old, new in replacements:
+            normalized = normalized.replace(old, new)
+        return normalized
+
+    def _is_casehug_url(self, raw_url: str) -> bool:
+        """
+        Return True only when URL host is casehug/hugcase.
+        Avoid substring checks because Steam OpenID URLs can contain
+        `return_to=...hugcase.com` in query params.
+        """
+        if not raw_url:
+            return False
+        try:
+            normalized = self._normalize_casehug_alias_url(str(raw_url))
+            parsed = urlparse(normalized)
+            host = str(parsed.hostname or "").strip(".").lower()
+            if not host:
+                return False
+            return (
+                host == "casehug.com"
+                or host.endswith(".casehug.com")
+                or host == "hugcase.com"
+                or host.endswith(".hugcase.com")
+            )
+        except Exception:
+            return False
+
+    async def _complete_steam_openid_if_needed(self) -> bool:
+        if not self.browser:
+            return False
 
         deadline = asyncio.get_event_loop().time() + 18
         steam_tab = None
@@ -1444,7 +1744,11 @@ class AutomationLogic:
             tabs = list(getattr(self.browser, "tabs", []) or [])
             for tab in tabs:
                 tab_url = (await self._get_tab_url(tab)).lower()
-                if "steamcommunity.com/openid/login" in tab_url:
+                if (
+                    "steamcommunity.com/openid/login" in tab_url
+                    or "steamcommunity.com/openid/loginform" in tab_url
+                    or ("steamcommunity.com/login/home" in tab_url and "openid" in tab_url)
+                ):
                     steam_tab = tab
                     break
             if steam_tab:
@@ -1452,7 +1756,7 @@ class AutomationLogic:
             await asyncio.sleep(0.6)
 
         if not steam_tab:
-            return
+            return False
 
         logger.info("Steam OpenID tab detected for account %s.", self.account_id)
         try:
@@ -1467,70 +1771,357 @@ class AutomationLogic:
         await asyncio.sleep(1.0)
         self._hide_browser_windows()
 
-        selectors = [
+        selectors = (
             "#imageLogin",
             "input#imageLogin",
-            "input[type='submit'][value*='Sign In']",
+            "button#imageLogin",
+            "#success_continue_btn",
+            ".auth_button[data-modalstate='complete']",
+            "a.global_action_link",
+            "a[href*='login/home/?goto=openid']",
             "button[type='submit']",
-        ]
-        for selector in selectors:
-            try:
-                button = await steam_tab.query_selector(selector)
-                if not button:
-                    continue
-                await button.scroll_into_view()
-                await asyncio.sleep(0.3)
-                await button.click()
-                self._hide_browser_windows()
-                logger.info(
-                    "Clicked Steam OpenID approval button: account=%s selector=%s",
-                    self.account_id,
-                    selector,
-                )
-                await asyncio.sleep(2.0)
-                return
-            except Exception:
-                continue
+            "input[type='submit']",
+            "input[type='button']",
+            "a[href*='/openid/login']",
+        )
+        clicked_any = False
+        wait_deadline = asyncio.get_event_loop().time() + 70
+        forced_openid_navigation = False
+        stale_loginform_checks = 0
 
-        # Fallback for markup variations.
-        for selector in ("button", "input"):
+        def _extract_openid_target(raw_url: str) -> str:
             try:
-                elements = await steam_tab.select_all(selector)
+                parsed = urlparse(self._normalize_casehug_alias_url(raw_url))
+                goto_values = parse_qs(parsed.query).get("goto") or []
+                if not goto_values:
+                    return ""
+                target = unquote(goto_values[0] or "")
+                if not target:
+                    return ""
+
+                # Steam sometimes nests URL encoding in goto values.
+                for _ in range(2):
+                    lowered = target.lower()
+                    if ("%2f" not in lowered) and ("%3a" not in lowered):
+                        break
+                    decoded = unquote(target)
+                    if decoded == target:
+                        break
+                    target = decoded
+
+                target = self._normalize_casehug_alias_url(target)
+
+                if target.startswith("/"):
+                    return f"https://steamcommunity.com{target}"
+                if target.lower().startswith("http://") or target.lower().startswith("https://"):
+                    return target
+                return f"https://steamcommunity.com/{target.lstrip('/')}"
             except Exception:
-                # Steam page can transiently timeout while querying controls.
-                # This should not abort the whole login flow.
-                continue
-            for element in elements:
+                return ""
+
+        while asyncio.get_event_loop().time() < wait_deadline:
+            raw_tab_url = await self._get_tab_url(steam_tab)
+            tab_url = (raw_tab_url or "").lower()
+
+            if "openid.mode=cancel" in tab_url or "openid.mode=error" in tab_url:
+                if not self._steam_manual_login_required:
+                    self._steam_manual_login_required = True
+                    self._emit_status(
+                        self.account_id,
+                        "Steam login was canceled or rejected. Please re-login this account once in Steam.",
+                        "warning",
+                    )
+                return False
+
+            if ("steamcommunity.com/openid/loginform" in tab_url) or ("steamcommunity.com/login/home" in tab_url):
+                loginform_detected = False
                 try:
-                    html = (await element.get_html() or "").lower()
-                    if "sign in" not in html and "proceed" not in html and "allow" not in html:
+                    loginform_detected = bool(
+                        await steam_tab.evaluate(
+                            r"""
+(() => {
+  const hasKnownRoot = !!document.querySelector('.login_featuretarget_ctn, .newlogindialog_LoginDialog_Container, #application_config');
+  const title = String(document.title || '').toLowerCase();
+  return hasKnownRoot || title.includes('sign in');
+})()
+"""
+                        )
+                    )
+                except Exception:
+                    loginform_detected = False
+
+                if loginform_detected:
+                    stale_loginform_checks += 1
+
+                    # Try auto-submit on Steam login container before giving up.
+                    try:
+                        auto_submitted = bool(
+                            await steam_tab.evaluate(
+                                r"""
+(() => {
+  const submitSelectors = [
+    '#imageLogin',
+    'button#imageLogin',
+    'input#imageLogin',
+    '#success_continue_btn',
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'input[type="button"]',
+    '.auth_button[data-modalstate="complete"]',
+  ];
+
+  for (const sel of submitSelectors) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    try {
+      el.click();
+      return true;
+    } catch (_) {}
+  }
+
+  // Fallback by text.
+  const words = ['sign in', 'login', 'continue', 'allow', 'approve'];
+  const nodes = Array.from(document.querySelectorAll('button,a,input[type="submit"],input[type="button"]'));
+  for (const n of nodes) {
+    const text = String(n.innerText || n.textContent || n.value || '').toLowerCase();
+    if (!text) continue;
+    if (!words.some((w) => text.includes(w))) continue;
+    try {
+      n.click();
+      return true;
+    } catch (_) {}
+  }
+
+  return false;
+})()
+"""
+                            )
+                        )
+                        if auto_submitted:
+                            clicked_any = True
+                            await asyncio.sleep(0.8)
+                    except Exception:
+                        pass
+
+                    if stale_loginform_checks in (6, 12, 18):
+                        self._emit_status(
+                            self.account_id,
+                            "Steam sign-in page detected. Trying automatic confirmation...",
+                            "info",
+                        )
+
+                    if stale_loginform_checks >= 24:
+                        if not self._steam_manual_login_required:
+                            self._steam_manual_login_required = True
+                            self._emit_status(
+                                self.account_id,
+                                "Steam session is not authenticated in this profile. Open Steam once and sign in manually for this account.",
+                                "warning",
+                            )
+                        return False
+                else:
+                    stale_loginform_checks = 0
+
+            if self._is_casehug_url(raw_tab_url):
+                logger.info("Steam OpenID flow returned to CaseHug domain for account %s.", self.account_id)
+                # Finalize callback on primary tab to ensure session cookies/context
+                # are applied in the tab used by automation.
+                try:
+                    callback_url = self._normalize_casehug_alias_url(raw_tab_url)
+                    if callback_url:
+                        await self.page.get(callback_url)
+                        await asyncio.sleep(1.8)
+                        self._hide_browser_windows()
+                except Exception:
+                    pass
+
+                # Mirror cookies and close stale OpenID tabs to prevent endless
+                # callback loops across multiple leftover tabs.
+                try:
+                    await asyncio.wait_for(self._sync_casehug_alias_cookies(), timeout=8)
+                except Exception:
+                    pass
+                await self._close_stale_steam_openid_tabs()
+                return True
+
+            # If Steam keeps us on loginform/home wrapper, force direct OpenID endpoint from goto.
+            if (("openid/loginform" in tab_url) or ("login/home" in tab_url)) and not forced_openid_navigation:
+                forced_openid_navigation = True
+                openid_target = _extract_openid_target(tab_url)
+                if openid_target and "/openid/login" in openid_target:
+                    try:
+                        normalized_target = self._normalize_casehug_alias_url(openid_target)
+                        if normalized_target != openid_target:
+                            logger.info(
+                                "Normalized Steam OpenID callback domain for account %s.",
+                                self.account_id,
+                            )
+                        await steam_tab.get(normalized_target)
+                        await asyncio.sleep(1.2)
+                        self._hide_browser_windows()
+                        logger.info(
+                            "Forced Steam OpenID direct endpoint for account %s: %s",
+                            self.account_id,
+                            normalized_target,
+                        )
                         continue
-                    await element.scroll_into_view()
-                    await asyncio.sleep(0.3)
-                    await element.click()
+                    except Exception:
+                        pass
+
+            # Session expired in profile -> Steam credential form visible.
+            try:
+                username_input = await steam_tab.query_selector(
+                    "#input_username, input[name='username'], input[name='password'], input[type='password']"
+                )
+            except Exception:
+                username_input = None
+            if username_input:
+                # Do not fail immediately: profile can still auto-fill/confirm in a couple of seconds.
+                try:
+                    await steam_tab.evaluate(
+                        r"""
+(() => {
+  const submit = document.querySelector('#imageLogin, button#imageLogin, input#imageLogin, button[type="submit"], input[type="submit"]');
+  if (!submit) return false;
+  try { submit.click(); return true; } catch (_) { return false; }
+})()
+"""
+                    )
+                except Exception:
+                    pass
+
+            clicked = False
+            for selector in selectors:
+                try:
+                    button = await steam_tab.query_selector(selector)
+                    if not button:
+                        continue
+                    await button.scroll_into_view()
+                    await asyncio.sleep(0.2)
+                    await button.click()
                     self._hide_browser_windows()
+                    clicked = True
+                    clicked_any = True
                     logger.info(
-                        "Clicked Steam OpenID fallback approval control: account=%s selector=%s",
+                        "Clicked Steam OpenID approval button: account=%s selector=%s",
                         self.account_id,
                         selector,
                     )
-                    await asyncio.sleep(2.0)
-                    return
+                    break
                 except Exception:
                     continue
 
-    async def _wait_for_casehug_login(self, timeout_seconds: int = 35) -> bool:
+            if not clicked:
+                # Fallback: click by button text/value in page context.
+                try:
+                    js_clicked = await steam_tab.evaluate(
+                        r"""
+(() => {
+  const words = ['sign in', 'login', 'allow', 'proceed', 'continue', 'proceed to steam'];
+  const list = Array.from(document.querySelectorAll("button,input[type='submit'],input[type='button'],a"));
+  for (const el of list) {
+    const text = String(el.innerText || el.textContent || el.value || '').toLowerCase();
+    if (!text) continue;
+    if (!words.some((w) => text.includes(w))) continue;
+    try { el.click(); return true; } catch (_) {}
+  }
+  const fallback = document.querySelector("button[type='submit'], input[type='submit']");
+  if (fallback) {
+    try { fallback.click(); return true; } catch (_) {}
+  }
+  return false;
+})()
+"""
+                    )
+                    if js_clicked:
+                        clicked_any = True
+                        clicked = True
+                        self._hide_browser_windows()
+                        logger.info("Clicked Steam OpenID approval via JS fallback for account %s.", self.account_id)
+                except Exception:
+                    pass
+
+            await asyncio.sleep(2.0 if clicked else 1.2)
+
+        return clicked_any
+
+    async def _wait_for_casehug_login(self, timeout_seconds: int = 55) -> bool:
         deadline = asyncio.get_event_loop().time() + timeout_seconds
         last_refresh = 0.0
+        openid_success_without_session = 0
+        retrigger_attempted = False
 
         while asyncio.get_event_loop().time() < deadline:
             self._hide_browser_windows()
-            if await self._is_casehug_logged_in():
+            if self._steam_manual_login_required:
+                return False
+            if await self._is_casehug_logged_in_safe(timeout_seconds=8):
                 return True
 
             # If Steam OpenID popup is still around, try to complete it again.
             try:
-                await self._complete_steam_openid_if_needed()
+                openid_progress = await asyncio.wait_for(
+                    self._complete_steam_openid_if_needed(),
+                    timeout=60,
+                )
+                if openid_progress:
+                    # CaseHug still references old hugcase callback in some flows.
+                    # Mirror auth cookies between aliases before final login check.
+                    logger.info(
+                        "Steam OpenID callback returned for account %s; validating CaseHug session.",
+                        self.account_id,
+                    )
+                    try:
+                        await asyncio.wait_for(self._sync_casehug_alias_cookies(), timeout=8)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "CaseHug alias cookie sync timed out for account %s.",
+                            self.account_id,
+                        )
+
+                    if await self._is_casehug_logged_in_safe(timeout_seconds=10):
+                        return True
+
+                    openid_success_without_session += 1
+                    if openid_success_without_session >= 3 and not retrigger_attempted:
+                        retrigger_attempted = True
+                        self._emit_status(
+                            self.account_id,
+                            "Steam callback returned but session is still missing; retrying sign-in trigger once.",
+                            "info",
+                        )
+                        try:
+                            await self._dismiss_casehug_login_overlay()
+                        except Exception:
+                            pass
+                        try:
+                            retrigger_clicked = await self._click_best_steam_trigger()
+                            if retrigger_clicked:
+                                await asyncio.sleep(2.0)
+                                self._hide_browser_windows()
+                        except Exception:
+                            pass
+
+                    if openid_success_without_session >= 8:
+                        self._steam_manual_login_required = True
+                        self._emit_status(
+                            self.account_id,
+                            "Steam login callback completed but CaseHug session was not created. Please re-login this account once in Steam.",
+                            "warning",
+                        )
+                        return False
+                else:
+                    openid_success_without_session = 0
+            except asyncio.TimeoutError:
+                self._emit_status(
+                    self.account_id,
+                    "Steam OpenID step timed out; retrying login checks.",
+                    "warning",
+                )
+                logger.warning(
+                    "Steam OpenID step timed out for account %s; continuing login loop.",
+                    self.account_id,
+                )
             except Exception:
                 pass
 
@@ -1541,14 +2132,14 @@ class AutomationLogic:
                 pass
 
             now = asyncio.get_event_loop().time()
-            if now - last_refresh >= 12:
+            if now - last_refresh >= 30:
                 for target_url in _CASEHUG_FREE_CASE_URLS:
                     try:
                         await self.page.get(target_url)
                         await asyncio.sleep(2.0)
                         self._hide_browser_windows()
                         await self._wait_for_cloudflare(timeout=15)
-                        if await self._is_casehug_logged_in():
+                        if await self._is_casehug_logged_in_safe(timeout_seconds=8):
                             return True
                     except Exception:
                         continue
@@ -1556,10 +2147,11 @@ class AutomationLogic:
 
             await asyncio.sleep(1.5)
 
-        return await self._is_casehug_logged_in()
+        return await self._is_casehug_logged_in_safe(timeout_seconds=8)
 
     async def _steam_login_via_button(self) -> bool:
         """Click the Steam login button on casehug."""
+        self._steam_manual_login_required = False
         self._emit_status(self.account_id, "Attempting Steam login via button...", "info")
         try:
             await self.page.get("https://casehug.com/free-cases")
@@ -1568,7 +2160,7 @@ class AutomationLogic:
             await self._dismiss_casehug_login_overlay()
 
             # Guard: page may already be authenticated even if login flow reached this path.
-            if await self._is_casehug_logged_in():
+            if await self._is_casehug_logged_in_safe(timeout_seconds=8):
                 self._emit_status(
                     self.account_id,
                     "CaseHug session already authenticated.",
@@ -1586,7 +2178,7 @@ class AutomationLogic:
                 clicked = await self._click_best_steam_trigger()
 
             if not clicked:
-                if await self._is_casehug_logged_in():
+                if await self._is_casehug_logged_in_safe(timeout_seconds=8):
                     self._emit_status(
                         self.account_id,
                         "Steam sign-in button not visible, but session is authenticated.",
@@ -1622,7 +2214,7 @@ class AutomationLogic:
                 pass
 
             try:
-                await asyncio.wait_for(self._complete_steam_openid_if_needed(), timeout=25)
+                await asyncio.wait_for(self._complete_steam_openid_if_needed(), timeout=70)
             except asyncio.TimeoutError:
                 self._emit_status(
                     self.account_id,
@@ -1636,7 +2228,7 @@ class AutomationLogic:
                     "warning",
                 )
 
-            logged_in = await self._wait_for_casehug_login(timeout_seconds=35)
+            logged_in = await self._wait_for_casehug_login(timeout_seconds=55)
             if logged_in:
                 self._emit_status(self.account_id, "Steam login successful.", "success")
                 return True
@@ -1652,22 +2244,37 @@ class AutomationLogic:
     #  CLOUDFLARE                                                          #
     # ------------------------------------------------------------------ #
 
-    async def _wait_for_cloudflare(self, timeout: int = 30):
+    async def _wait_for_cloudflare(self, timeout: int = 30) -> bool:
         """Wait until Cloudflare challenge is resolved (nodriver handles it automatically)."""
-        self._emit_status(self.account_id, "Waiting for Cloudflare...", "info")
         deadline = asyncio.get_event_loop().time() + timeout
+        waiting_announced = False
+
         while asyncio.get_event_loop().time() < deadline:
             self._hide_browser_windows()
-            content = await self.page.get_content()
+            try:
+                content = await self.page.get_content()
+            except Exception:
+                await asyncio.sleep(1.0)
+                continue
+
             cf_present = any(
                 kw in content.lower()
                 for kw in ["just a moment", "checking your browser", "cloudflare", "turnstile"]
             )
             if not cf_present:
-                self._emit_status(self.account_id, "Cloudflare bypassed.", "info")
-                return
+                if waiting_announced:
+                    self._emit_status(self.account_id, "Cloudflare bypassed.", "info")
+                return True
+
+            if not waiting_announced:
+                self._emit_status(self.account_id, "Waiting for Cloudflare...", "info")
+                waiting_announced = True
+
             await asyncio.sleep(2)
-        self._emit_status(self.account_id, "Cloudflare timeout — continuing anyway.", "warning")
+
+        if waiting_announced:
+            self._emit_status(self.account_id, "Cloudflare timeout — continuing anyway.", "warning")
+        return False
 
     # ------------------------------------------------------------------ #
     #  CASE DETECTION                                                      #
