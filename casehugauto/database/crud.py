@@ -208,6 +208,28 @@ class AccountCRUD:
 
 class SkinCRUD:
     @staticmethod
+    def snapshot_signature(
+        skin_name: str,
+        case_source: Optional[str],
+        estimated_price: Optional[float],
+        obtained_date: Optional[datetime],
+    ) -> str:
+        """Build a stable signature used to match snapshot rows without external item IDs."""
+        name_part = str(skin_name or "").strip().lower()
+        case_part = str(case_source or "").strip().lower()
+        try:
+            price_part = f"{float(estimated_price or 0.0):.4f}"
+        except Exception:
+            price_part = "0.0000"
+
+        if isinstance(obtained_date, datetime):
+            dt_part = obtained_date.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            dt_part = ""
+
+        return "|".join([name_part, case_part, price_part, dt_part])
+
+    @staticmethod
     def create(db: Session, account_id: int, skin_name: str, **kwargs) -> Skin:
         """Create new skin"""
         skin = Skin(
@@ -471,6 +493,47 @@ class SkinCRUD:
             db.commit()
             return True
         return False
+
+    @staticmethod
+    def delete_missing_from_snapshot(
+        db: Session,
+        account_id: int,
+        *,
+        item_ids: set[str],
+        signatures: set[str],
+    ) -> int:
+        """Delete account skins that are not present in the latest site snapshot."""
+        rows = db.query(Skin).filter(Skin.account_id == account_id).all()
+        if not rows:
+            return 0
+
+        to_delete_ids: list[int] = []
+        for row in rows:
+            row_item_id = str(row.external_item_id or "").strip()
+            if row_item_id:
+                if row_item_id not in item_ids:
+                    to_delete_ids.append(int(row.id))
+                continue
+
+            row_signature = SkinCRUD.snapshot_signature(
+                skin_name=str(row.skin_name or ""),
+                case_source=row.case_source,
+                estimated_price=row.estimated_price,
+                obtained_date=row.obtained_date,
+            )
+            if row_signature not in signatures:
+                to_delete_ids.append(int(row.id))
+
+        if not to_delete_ids:
+            return 0
+
+        (
+            db.query(Skin)
+            .filter(Skin.id.in_(to_delete_ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        return len(to_delete_ids)
     
     @staticmethod
     def get_stats(db: Session, account_id: int) -> dict:

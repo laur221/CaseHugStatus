@@ -3,7 +3,7 @@ import html
 from ...database.db import SessionLocal
 from ...database.crud import AccountCRUD, SkinCRUD
 from ...core.rarity import color_for_rarity_label
-from ...core.skin_importer import import_skins_from_html
+from ...core.skin_importer import import_skins_from_html, sync_skins_from_html
 
 
 class SkinsPage:
@@ -256,6 +256,11 @@ class SkinsPage:
             autofocus=True,
         )
 
+        full_sync_checkbox = ft.Checkbox(
+            label="Delete skins missing from this HTML snapshot (full sync)",
+            value=False,
+        )
+
         def do_import(_):
             raw_html = str(html_field.value or "").strip()
             if not raw_html:
@@ -264,7 +269,15 @@ class SkinsPage:
 
             db = SessionLocal()
             try:
-                report = import_skins_from_html(db, self.selected_account, raw_html)
+                if bool(full_sync_checkbox.value):
+                    report = sync_skins_from_html(
+                        db,
+                        self.selected_account,
+                        raw_html,
+                        delete_missing=True,
+                    )
+                else:
+                    report = import_skins_from_html(db, self.selected_account, raw_html)
             except Exception as exc:
                 self._show_snackbar(f"⚠️ Import failed: {exc}")
                 return
@@ -281,24 +294,25 @@ class SkinsPage:
             page.dialog = None
             self._refresh_skins(update_ui=True)
             self._show_snackbar(
-                "✅ Import complete. "
+                "✅ Sync complete. "
                 f"Parsed: {report.get('parsed', 0)}, "
                 f"Created: {report.get('created', 0)}, "
                 f"Updated: {report.get('updated', 0)}, "
+                f"Deleted: {report.get('deleted', 0)}, "
                 f"Skipped: {report.get('skipped', 0)}"
             )
             page.update()
 
         dlg = ft.AlertDialog(
-            title=ft.Text("Import Skins (Non-destructive)"),
+            title=ft.Text("Import / Sync Skins From HTML"),
             content=ft.Column(
                 [
                     ft.Text(
-                        "This import does NOT delete existing skins from DB. "
-                        "It only adds missing ones and updates matches.",
+                        "Default mode is non-destructive. Enable full sync to also remove sold/missing skins.",
                         size=12,
                         color="#9aa7bd",
                     ),
+                    full_sync_checkbox,
                     html_field,
                 ],
                 tight=True,

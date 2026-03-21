@@ -62,3 +62,7 @@ logs/*.png
 .DS_Store
 Thumbs.db
 .env
+
+=0.19.5
+scripts/profiles/
+background_worker.lock

@@ -8,6 +8,8 @@ from ...database.crud import AccountCRUD
 from ...models.models import BotStatus, Skin
 from ..components.steam_login_qr_dialog import SteamLoginQRDialog
 from ...core.bot_runner import bot_runner
+from ...core.account_browser_launcher import casehug_browser_launcher
+from ...core.skin_importer import sync_skins_from_site
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +384,20 @@ class AccountsPage:
                     on_click=lambda _: self._toggle_bot(account),
                 ),
                 ft.IconButton(
+                    "open_in_new",
+                    tooltip="Open Browser For This Account",
+                    icon_color="#9ed9ff",
+                    style=ft.ButtonStyle(bgcolor="#1a2537"),
+                    on_click=lambda _: self._open_account_browser(account),
+                ),
+                ft.IconButton(
+                    "sync",
+                    tooltip="Sync Skins From Website",
+                    icon_color="#8ce0c2",
+                    style=ft.ButtonStyle(bgcolor="#1a2537"),
+                    on_click=lambda _: self._sync_account_skins(account),
+                ),
+                ft.IconButton(
                     "delete",
                     tooltip="Delete Account",
                     icon_color="#aeb9cb",
@@ -459,6 +475,111 @@ class AccountsPage:
 
         self.refresh_accounts()
         self.app.main_area.page.update()
+
+    def _open_account_browser(self, account):
+        """Launch visible browser for manual account operations."""
+        if bot_runner.is_running(account.id):
+            self.app.main_area.page.snack_bar = ft.SnackBar(
+                ft.Text(f"⚠️ {account.account_name}: stop bot before opening manual browser.")
+            )
+            self.app.main_area.page.snack_bar.open = True
+            self.app.main_area.page.update()
+            return
+
+        db = SessionLocal()
+        try:
+            account_row = AccountCRUD.get_by_id(db, int(account.id))
+            if not account_row:
+                ok, message = False, "Account not found."
+            else:
+                AccountCRUD.ensure_profile_path(db, account_row)
+                ok, message = casehug_browser_launcher.open_casehug(
+                    account_row.id,
+                    account_row.browser_profile_path or "",
+                    url="https://casehug.com/free-cases",
+                )
+        except Exception as exc:
+            ok, message = False, f"Could not open browser: {exc}"
+        finally:
+            db.close()
+
+        prefix = "✅" if ok else "⚠️"
+        self.app.main_area.page.snack_bar = ft.SnackBar(
+            ft.Text(f"{prefix} {account.account_name}: {message}")
+        )
+        self.app.main_area.page.snack_bar.open = True
+        self.app.main_area.page.update()
+
+    def _sync_account_skins(self, account):
+        """Sync account skins from website snapshot and remove sold items."""
+        if bot_runner.is_running(account.id):
+            self.app.main_area.page.snack_bar = ft.SnackBar(
+                ft.Text(f"⚠️ {account.account_name}: stop bot before syncing skins.")
+            )
+            self.app.main_area.page.snack_bar.open = True
+            self.app.main_area.page.update()
+            return
+
+        self._suspend_auto_refresh_until = time.time() + 8.0
+        self.app.main_area.page.snack_bar = ft.SnackBar(
+            ft.Text(f"🔄 {account.account_name}: syncing skins from casehug.com...")
+        )
+        self.app.main_area.page.snack_bar.open = True
+        self.app.main_area.page.update()
+
+        def run_sync():
+            db = SessionLocal()
+            try:
+                account_row = AccountCRUD.get_by_id(db, int(account.id))
+                if not account_row:
+                    ok = False
+                    summary = "Account not found."
+                else:
+                    AccountCRUD.ensure_profile_path(db, account_row)
+                    # Release possible profile lock from a previously opened manual browser.
+                    casehug_browser_launcher.close_account_browser(account_row.id)
+
+                    report = sync_skins_from_site(
+                        db,
+                        account_row.id,
+                        account_row.browser_profile_path or "",
+                    )
+                    ok = bool(report.get("imported"))
+                    if ok:
+                        summary = (
+                            f"Parsed: {report.get('parsed', 0)} | "
+                            f"Created: {report.get('created', 0)} | "
+                            f"Updated: {report.get('updated', 0)} | "
+                            f"Deleted: {report.get('deleted', 0)}"
+                        )
+                    else:
+                        summary = str(report.get("message") or "Sync failed.")
+            except Exception as exc:
+                ok = False
+                summary = f"Sync failed: {exc}"
+            finally:
+                db.close()
+
+            self._suspend_auto_refresh_until = time.time() + 1.0
+            try:
+                self.refresh_accounts()
+            except Exception:
+                pass
+
+            prefix = "✅" if ok else "⚠️"
+            self.app.main_area.page.snack_bar = ft.SnackBar(
+                ft.Text(f"{prefix} {account.account_name}: {summary}")
+            )
+            self.app.main_area.page.snack_bar.open = True
+            self.app.main_area.page.update()
+
+            try:
+                if getattr(self.app, "skins_page", None):
+                    self.app.skins_page._refresh_skins(update_ui=False)
+            except Exception:
+                pass
+
+        threading.Thread(target=run_sync, daemon=True).start()
 
     def _delete_account(self, account):
         """Delete account with confirmation"""
